@@ -1,0 +1,17 @@
+[Unit]
+Description=Koha Deploy: Collect Docker Compose logs to centralized host path
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+ConditionPathExists=/home/pinokew/Koha/koha-deploy/scripts/collect-docker-logs.sh
+
+[Service]
+Type=oneshot
+User=pinokew
+Group=pinokew
+WorkingDirectory=/home/pinokew/Koha/koha-deploy
+Environment=ENV_FILE=/home/pinokew/Koha/koha-deploy/.env
+ExecStart=/home/pinokew/Koha/koha-deploy/scripts/collect-docker-logs.sh
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Koha Deploy: periodic centralized Docker logs collection
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=koha-deploy-collect-logs.service
+
+[Install]
+WantedBy=timers.target

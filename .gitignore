@@ -10,3 +10,4 @@ rabbitmq_plugins
 files/docker/templates
 
 archive/
+NEW_CHAT_START_HERE.md

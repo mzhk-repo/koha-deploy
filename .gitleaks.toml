@@ -1,0 +1,7 @@
+title = "koha-deploy-gitleaks"
+
+[allowlist]
+description = "Allow placeholder values from templates"
+regexes = [
+  '''(?i)change_me_[a-z0-9_]+''',
+]

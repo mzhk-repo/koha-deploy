@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Script Purpose: Initialize required bind-mount directories and normalize permissions for Koha stack volumes.
+# Usage: Run on host before first deploy or after storage reset: ./scripts/init-volumes.sh.
 # Ініціалізує директорії bind-volume для Koha stack з .env та виставляє права.
 # Підтримувані volume-path змінні:
 # - VOL_DB_PATH        -> /var/lib/mysql

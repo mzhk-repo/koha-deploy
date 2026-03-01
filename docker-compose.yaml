@@ -2,6 +2,20 @@ services:
   koha:
     image: ${KOHA_IMAGE}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${KOHA_MEM_LIMIT:-2g}
+    cpus: ${KOHA_CPUS:-1.50}
     ports:
       - "${KOHA_OPAC_PORT:-8080}:${KOHA_OPAC_PORT:-8080}"
       - "${KOHA_INTRANET_PORT:-8081}:${KOHA_INTRANET_PORT:-8081}"
@@ -70,7 +84,27 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --server-id=${DB_SERVER_ID:-1}
+      - --log-bin=${DB_LOG_BIN_BASENAME:-mysql-bin}
+      - --binlog-format=${DB_BINLOG_FORMAT:-ROW}
+      - --binlog-row-image=${DB_BINLOG_ROW_IMAGE:-FULL}
+      - --sync-binlog=${DB_SYNC_BINLOG:-1}
+      - --expire-logs-days=${DB_BINLOG_EXPIRE_DAYS:-7}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${DB_MEM_LIMIT:-2g}
+    cpus: ${DB_CPUS:-1.50}
     networks:
       - kohanet
     environment:
@@ -96,6 +130,20 @@ services:
         RABBITMQ_VERSION: ${RABBITMQ_VERSION:-3-management}
     image: ${RABBITMQ_IMAGE:-koha-local-rabbitmq:3-management}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${RABBITMQ_MEM_LIMIT:-512m}
+    cpus: ${RABBITMQ_CPUS:-1.00}
     networks:
       - kohanet
     environment:
@@ -115,6 +163,22 @@ services:
         ES_VERSION: ${ES_VERSION:-8.19.6}
     image: ${ES_IMAGE:-koha-local-es:8.19.6}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${ES_MEM_LIMIT:-1g}
+    cpus: ${ES_CPUS:-1.00}
+    cap_drop:
+      - ALL
     networks:
       - kohanet
     environment:
@@ -139,6 +203,22 @@ services:
         MEMCACHED_VERSION: ${MEMCACHED_VERSION:-1.6}
     image: ${MEMCACHED_IMAGE:-koha-local-memcached:1.6}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${MEMCACHED_MEM_LIMIT:-256m}
+    cpus: ${MEMCACHED_CPUS:-0.50}
+    cap_drop:
+      - ALL
     networks:
       - kohanet
 
@@ -146,6 +226,22 @@ services:
     image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.2.0}
     # profiles: ["tunnel"]
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${TUNNEL_MEM_LIMIT:-128m}
+    cpus: ${TUNNEL_CPUS:-0.25}
+    cap_drop:
+      - ALL
     networks:
       - kohanet
     environment:

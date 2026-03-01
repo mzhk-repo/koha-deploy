@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Script Purpose: Patch Koha template/config input files using environment mapping before deployment.
+# Usage: Run on host when maintaining template-based config flow: ./scripts/patch-koha-templates.sh.
 set -euo pipefail
 # ==============================================================================
 # 0. AUTO-LOAD .ENV
