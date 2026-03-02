@@ -117,6 +117,11 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить без помилок.
+
+- Додатковий фікс сумісності Trivy:
+  - прибрано `--no-progress` з `trivy config` та `trivy image` у `ci-cd-checks.yml`,
+    бо у поточному CLI Trivy це невалідний прапор (`unknown flag: --no-progress`).
+  - після правки workflow знову проходить `actionlint`.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`

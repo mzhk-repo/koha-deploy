@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           log_file="trivy-config.log"
           set +e
-          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.57.1 config --exit-code 1 --severity HIGH,CRITICAL --no-progress /work 2>&1 | tee "${log_file}"
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.57.1 config --exit-code 1 --severity HIGH,CRITICAL /work 2>&1 | tee "${log_file}"
           trivy_rc=${PIPESTATUS[0]}
           set -e
           echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
@@ -130,7 +130,7 @@ jobs:
           set -euo pipefail
           log_file="trivy-image.log"
           set +e
-          docker run --rm aquasec/trivy:0.57.1 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "${LOCAL_SCAN_IMAGE}" 2>&1 | tee "${log_file}"
+          docker run --rm aquasec/trivy:0.57.1 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${LOCAL_SCAN_IMAGE}" 2>&1 | tee "${log_file}"
           trivy_rc=${PIPESTATUS[0]}
           set -e
           echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
