@@ -205,6 +205,23 @@
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
   - fallback локально визначається коректно:
     - `mode=pull source=pinokew/koha:25.05`.
+
+### 12) CI fix: Trivy image не бачив локальний `local/koha-scan:*`
+
+- Root cause:
+  - `trivy image` запускався у контейнері без доступу до Docker daemon, тому не міг прочитати локально зібраний/retagged образ.
+  - Симптом у логу:
+    - `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`
+
+- Фікс у [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml):
+  - для кроку `Trivy image` додано mount:
+    - `-v /var/run/docker.sock:/var/run/docker.sock`
+
+- Результат:
+  - Trivy image scanner отримує доступ до локального image store runner-а і може сканувати `${LOCAL_SCAN_IMAGE}`.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`
