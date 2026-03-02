@@ -1,0 +1,129 @@
+name: ci-cd-checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: pinokew/koha
+  KOHA_VERSION: "25.05"
+  LOCAL_SCAN_IMAGE: local/koha-scan:${{ github.sha }}
+
+jobs:
+  ci-checks:
+    name: ci-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Hadolint
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find . -type f -name 'Dockerfile' | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "No Dockerfiles found"; exit 1; }
+          docker run --rm -v "$PWD:/work" -w /work ghcr.io/hadolint/hadolint:v2.12.0-debian hadolint "${files[@]}"
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find scripts -type f -name '*.sh' | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "No shell scripts found under scripts/"; exit 1; }
+          docker run --rm -v "$PWD:/work" -w /work koalaman/shellcheck:v0.10.0 -x "${files[@]}"
+
+      - name: Trivy config
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.57.1 config --exit-code 1 --severity HIGH,CRITICAL --no-progress /work
+
+      - name: Local secrets hygiene checks
+        run: bash ./scripts/check-secrets-hygiene.sh
+
+      - name: Internal ports policy check
+        run: bash ./scripts/check-internal-ports-policy.sh
+
+      - name: Gitleaks
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" -w /work zricethezav/gitleaks:v8.24.2 detect --source /work --config /work/.gitleaks.toml --no-banner --redact --exit-code 1
+
+  build-and-publish:
+    name: build-and-publish
+    needs: ci-checks
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository_owner == 'pinokew'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Buildx builder
+        run: |
+          set -euo pipefail
+          docker buildx create --name koha-builder --driver docker-container --use
+          docker buildx inspect --bootstrap
+
+      - name: Docker Hub login
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build image for Trivy scan (no push)
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file Dockerfile \
+            --build-arg KOHA_VERSION="${KOHA_VERSION}" \
+            --tag "${LOCAL_SCAN_IMAGE}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            .
+
+      - name: Trivy image
+        run: |
+          set -euo pipefail
+          docker run --rm aquasec/trivy:0.57.1 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "${LOCAL_SCAN_IMAGE}"
+
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file Dockerfile \
+            --build-arg KOHA_VERSION="${KOHA_VERSION}" \
+            --tag "${IMAGE_NAME}:${KOHA_VERSION}" \
+            --tag "${IMAGE_NAME}:latest" \
+            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --push \
+            .
+
+      - name: Generate SBOM (SPDX JSON)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/work" \
+            anchore/syft:v1.20.0 \
+            "docker:${LOCAL_SCAN_IMAGE}" \
+            -o "spdx-json=/work/sbom-${GITHUB_SHA}.spdx.json"

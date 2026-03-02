@@ -54,22 +54,67 @@
   - каталоги та файли створені під `VOL_KOHA_LOGS=/srv/koha-volumes/koha_logs`
   - інкрементальний стан оновлюється у `.docker_logs_since`
 
-### 3) Roadmap 1.1 (поетапно): крок 1/4 `branch protection для main`
+### 4) Roadmap 1.1 (поетапно): крок 2/4 + 3/4 + 4/4 (CI checks, pinned uses, permissions/concurrency)
 
-- Додано скрипт застосування branch protection через GitHub API:
-  - [scripts/apply-branch-protection.sh](/home/pinokew/Koha/koha-deploy/scripts/apply-branch-protection.sh)
-  - покриває:
-    - заборону force-push/delete
-    - required review (мінімум 1)
-    - required status checks
-    - conversation resolution + linear history
+- З урахуванням нового правила (UI-first) прибрано API-скрипт для branch protection:
+  - видалено `scripts/apply-branch-protection.sh`
+  - branch protection керується через GitHub UI/rulesets.
 
-- Перевірено локально:
-  - `./scripts/apply-branch-protection.sh --dry-run`
-  - payload формується коректно для `pinokew/koha-deploy:main`
+- Створено єдиний workflow:
+  - [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
+  - jobs/checks:
+    - `hadolint`
+    - `shellcheck`
+    - `trivy config`
+    - `trivy image`
+    - `secret-scan`
 
-- Обмеження поточного середовища:
-  - `GITHUB_TOKEN` не заданий, тому `--apply` не виконувався в цій сесії.
+- Для critical workflow pinned `uses`:
+  - `actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332`
 
-- Команда застосування (коли є токен з admin правами на repo):
-  - `GITHUB_TOKEN=*** ./scripts/apply-branch-protection.sh --apply`
+- Мінімізація прав і керування паралельністю:
+  - top-level `permissions: contents: read`
+  - top-level `concurrency` з `cancel-in-progress: true`
+
+- Важливо:
+  - старий `.github/workflows/secret-scan.yml` видалено і замінено на consolidated workflow.
+
+- Перевірено:
+  - `actionlint` для нового workflow: без помилок.
+  - локальні pre-check скрипти проходять:
+    - `check-secrets-hygiene.sh`
+    - `check-internal-ports-policy.sh`
+
+### 5) Roadmap 1.1 (уточнення CI): 2 required jobs у `ci-cd-checks.yml`
+
+- `ci-cd-checks.yml` перебудовано під 2 jobs для зручного ruleset-mapping:
+  - `ci-checks`
+  - `build-and-publish`
+
+- У `ci-checks` зібрано основні gate-перевірки:
+  - `hadolint`
+  - `shellcheck`
+  - `trivy config`
+  - `check-secrets-hygiene.sh`
+  - `check-internal-ports-policy.sh`
+  - `gitleaks`
+
+- У `build-and-publish` додано обмеження publish лише для `main`:
+  - `if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository_owner == 'pinokew'`
+
+- Pinned `uses` для critical action:
+  - `actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332`
+
+- Для required workflow не використовується `paths-ignore` (щоб уникати пропущених required checks на PR).
+
+- Імплементовано корисні практики з `build-and-push.yml`:
+  - `timeout-minutes` для jobs
+  - `persist-credentials: false`, `fetch-depth: 1`
+  - `workflow_dispatch`
+  - pre-push `trivy image` scan
+  - Buildx cache (`type=gha`)
+  - генерація SBOM (`syft`, SPDX JSON)
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить без помилок.
+  - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
