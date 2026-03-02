@@ -179,6 +179,32 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+
+### 11) CI fix: `build-and-publish` без root `Dockerfile`
+
+- Причина падіння:
+  - у репо немає `./Dockerfile`, тому `docker buildx build --file Dockerfile ...` падав з:
+    - `failed to read dockerfile: open Dockerfile: no such file or directory`
+
+- Додано fallback-режим у [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml):
+  - крок `Resolve image source mode`:
+    - `mode=build`, якщо існує `./Dockerfile`;
+    - `mode=pull`, якщо `./Dockerfile` відсутній (джерело береться з `KOHA_IMAGE` у `.env.example`).
+  - у `mode=build`:
+    - виконуються `buildx setup`, перевірка Docker Hub secrets, `docker login`, build/push.
+  - у `mode=pull`:
+    - виконується `docker pull` source image + `docker tag` у `${LOCAL_SCAN_IMAGE}`,
+    - виконується `trivy image` scan,
+    - publish крок пропускається з явним повідомленням.
+
+- Результат:
+  - workflow більше не падає через відсутній root `Dockerfile`;
+  - сканування образу все одно виконується і залишається blocking.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+  - fallback локально визначається коректно:
+    - `mode=pull source=pinokew/koha:25.05`.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`

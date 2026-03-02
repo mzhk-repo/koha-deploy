@@ -102,13 +102,36 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Resolve image source mode
+        id: resolve_source
+        run: |
+          set -euo pipefail
+          if [ -f Dockerfile ]; then
+            {
+              echo "mode=build"
+              echo "dockerfile=Dockerfile"
+              echo "context=."
+            } >> "${GITHUB_OUTPUT}"
+            echo "Resolved mode: build from ./Dockerfile"
+          else
+            source_image="$(grep -E '^KOHA_IMAGE=' .env.example | head -n1 | cut -d'=' -f2-)"
+            [ -n "${source_image}" ] || { echo "Dockerfile missing and KOHA_IMAGE not found in .env.example"; exit 1; }
+            {
+              echo "mode=pull"
+              echo "source_image=${source_image}"
+            } >> "${GITHUB_OUTPUT}"
+            echo "Resolved mode: pull source image ${source_image}"
+          fi
+
       - name: Set up Buildx builder
+        if: steps.resolve_source.outputs.mode == 'build'
         run: |
           set -euo pipefail
           docker buildx create --name koha-builder --driver docker-container --use
           docker buildx inspect --bootstrap
 
       - name: Validate Docker Hub secrets
+        if: steps.resolve_source.outputs.mode == 'build'
         run: |
           set -euo pipefail
           if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
@@ -121,21 +144,30 @@ jobs:
           fi
 
       - name: Docker Hub login
+        if: steps.resolve_source.outputs.mode == 'build'
         run: |
           set -euo pipefail
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Build image for Trivy scan (no push)
+        if: steps.resolve_source.outputs.mode == 'build'
         run: |
           set -euo pipefail
           docker buildx build \
-            --file Dockerfile \
+            --file "${{ steps.resolve_source.outputs.dockerfile }}" \
             --build-arg KOHA_VERSION="${KOHA_VERSION}" \
             --tag "${LOCAL_SCAN_IMAGE}" \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --load \
-            .
+            "${{ steps.resolve_source.outputs.context }}"
+
+      - name: Pull source image for Trivy scan (no build mode)
+        if: steps.resolve_source.outputs.mode == 'pull'
+        run: |
+          set -euo pipefail
+          docker pull "${{ steps.resolve_source.outputs.source_image }}"
+          docker tag "${{ steps.resolve_source.outputs.source_image }}" "${LOCAL_SCAN_IMAGE}"
 
       - name: Trivy image
         id: trivy_image
@@ -167,10 +199,11 @@ jobs:
           exit 1
 
       - name: Build and push image
+        if: steps.resolve_source.outputs.mode == 'build'
         run: |
           set -euo pipefail
           docker buildx build \
-            --file Dockerfile \
+            --file "${{ steps.resolve_source.outputs.dockerfile }}" \
             --build-arg KOHA_VERSION="${KOHA_VERSION}" \
             --tag "${IMAGE_NAME}:${KOHA_VERSION}" \
             --tag "${IMAGE_NAME}:latest" \
@@ -178,7 +211,13 @@ jobs:
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --push \
-            .
+            "${{ steps.resolve_source.outputs.context }}"
+
+      - name: Skip publish (no Dockerfile mode)
+        if: steps.resolve_source.outputs.mode == 'pull'
+        run: |
+          echo "Dockerfile not found in repository root."
+          echo "Build/push skipped; source image was scanned only."
 
       - name: Generate SBOM (SPDX JSON)
         run: |
