@@ -146,6 +146,27 @@
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
   - `docker pull hadolint/hadolint:v2.13.1-alpine` проходить.
   - `docker pull aquasec/trivy:0.57.1` проходить.
+
+### 9) Trivy стабілізація + усунення `AVD-DS-0002`
+
+- Прибрано шумні/нестабільні помилки Rego policy update у `trivy config`:
+  - додано `--skip-check-update` у [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml).
+  - це прибирає runtime-завантаження checks, яке давало `rego_type_error` у CI логах.
+
+- Закрито HIGH finding `AVD-DS-0002` (відсутній явний non-root `USER`) у Dockerfile:
+  - [elasticsearch/Dockerfile](/home/pinokew/Koha/koha-deploy/elasticsearch/Dockerfile): додано `USER elasticsearch`
+  - [memcached/Dockerfile](/home/pinokew/Koha/koha-deploy/memcached/Dockerfile): додано `USER memcache`
+  - [rabbitmq/Dockerfile](/home/pinokew/Koha/koha-deploy/rabbitmq/Dockerfile): додано `USER rabbitmq`
+
+- Перевірено:
+  - `docker run aquasec/trivy:0.57.1 config --skip-check-update ...`:
+    - без `rego` помилок update
+    - `Detected config files num=3`
+  - збірка оновлених образів:
+    - `docker build -f elasticsearch/Dockerfile ...` OK
+    - `docker build -f memcached/Dockerfile ...` OK
+    - `docker build -f rabbitmq/Dockerfile ...` OK
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`

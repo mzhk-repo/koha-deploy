@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           log_file="trivy-config.log"
           set +e
-          docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" config --exit-code 1 --severity HIGH,CRITICAL /work 2>&1 | tee "${log_file}"
+          docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" config --skip-check-update --exit-code 1 --severity HIGH,CRITICAL /work 2>&1 | tee "${log_file}"
           trivy_rc=${PIPESTATUS[0]}
           set -e
           echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
