@@ -24,12 +24,17 @@ env:
   ES_SCAN_IMAGE: local/es-scan:${{ github.sha }}
   RABBITMQ_SCAN_IMAGE: local/rabbitmq-scan:${{ github.sha }}
   MEMCACHED_SCAN_IMAGE: local/memcached-scan:${{ github.sha }}
-  TRIVY_IMAGE: aquasec/trivy:0.57.1
-  HADOLINT_IMAGE: hadolint/hadolint:v2.13.1-alpine
   MARIADB_IMAGE_DEFAULT: docker.io/mariadb:11
   ES_VERSION_DEFAULT: "8.19.6"
   RABBITMQ_VERSION_DEFAULT: "3-management"
   MEMCACHED_VERSION_DEFAULT: "1.6"
+
+  TRIVY_IMAGE: aquasec/trivy@sha256:33f816d414b9d582d25bb737ffa4a632ae34e222f7ec1b50252cef0ce2266006
+  HADOLINT_IMAGE: hadolint/hadolint@sha256:84c2f9088a8cb0ea2bd16b5349186770d16441e77eec1a1d1e0574cf7dff47ac
+  SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+  GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
+  SYFT_IMAGE: anchore/syft@sha256:19ed45c8f4bf846390b072966a2fec52279d09f9e47650830ffabec7eebaf0fe
+
 
 jobs:
   ci-checks:
@@ -38,7 +43,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
           fetch-depth: 1
@@ -55,7 +60,7 @@ jobs:
           set -euo pipefail
           mapfile -t files < <(find scripts -type f -name '*.sh' | sort)
           [ "${#files[@]}" -gt 0 ] || { echo "No shell scripts found under scripts/"; exit 1; }
-          docker run --rm -v "$PWD:/work" -w /work koalaman/shellcheck:v0.10.0 -x "${files[@]}"
+          docker run --rm -v "$PWD:/work" -w /work "${SHELLCHECK_IMAGE}" -x "${files[@]}"
 
       - name: Trivy config
         id: trivy_config
@@ -95,7 +100,7 @@ jobs:
       - name: Gitleaks
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/work" -w /work zricethezav/gitleaks:v8.24.2 detect --source /work --config /work/.gitleaks.toml --no-banner --redact --exit-code 1
+          docker run --rm -v "$PWD:/work" -w /work "${GITLEAKS_IMAGE}" detect --source /work --config /work/.gitleaks.toml --no-banner --redact --exit-code 1
 
   build-and-publish:
     name: build-and-publish
@@ -323,6 +328,6 @@ jobs:
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD:/work" \
-            anchore/syft:v1.20.0 \
+            "${SYFT_IMAGE}" \
             "docker:${LOCAL_SCAN_IMAGE}" \
             -o "spdx-json=/work/sbom-${GITHUB_SHA}.spdx.json"

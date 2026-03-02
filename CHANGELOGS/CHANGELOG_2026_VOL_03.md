@@ -50,3 +50,23 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+
+### 3) Централізація версій CI-утиліт у `env` + digest pin для hadolint
+
+- У [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml) винесено image refs у top-level `env`:
+  - `TRIVY_IMAGE`
+  - `HADOLINT_IMAGE`
+  - `SHELLCHECK_IMAGE`
+  - `GITLEAKS_IMAGE`
+  - `SYFT_IMAGE`
+
+- Оновлено кроки на використання змінних з `env`:
+  - Shellcheck
+  - Gitleaks
+  - SBOM (syft)
+
+- `HADOLINT_IMAGE` запінено на digest:
+  - `hadolint/hadolint@sha256:84c2f9088a8cb0ea2bd16b5349186770d16441e77eec1a1d1e0574cf7dff47ac`
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.

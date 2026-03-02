@@ -6,7 +6,7 @@
 
 1. [CHANGELOG_2026_VOL_03.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_03.md)
    - Статус: active
-   - Рядків: ~52
+   - Рядків: ~72
    - Контекст: тимчасове risk acceptance Trivy + стабілізація застосування ignore-файлу в image scans
 
 2. [CHANGELOG_2026_VOL_02.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_02.md)
