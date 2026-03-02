@@ -6,7 +6,7 @@
 
 1. [CHANGELOG_2026_VOL_02.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_02.md)
    - Статус: active
-   - Рядків: ~164
+   - Рядків: ~172
    - Контекст: перехід до roadmap 1.3 (Identity/OIDC lockdown), поетапна імплементація
 
 2. [CHANGELOG_2026_VOL_01.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_01.md)

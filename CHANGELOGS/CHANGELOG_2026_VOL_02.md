@@ -122,6 +122,14 @@
   - прибрано `--no-progress` з `trivy config` та `trivy image` у `ci-cd-checks.yml`,
     бо у поточному CLI Trivy це невалідний прапор (`unknown flag: --no-progress`).
   - після правки workflow знову проходить `actionlint`.
+
+- Зменшення залежності від Docker Hub для Trivy:
+  - джерело образу Trivy перемкнено на GHCR:
+    - `TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.57.1`
+  - обидва скани (`config`, `image`) тепер запускаються через `${TRIVY_IMAGE}`.
+  - логіка fail-gate і виводу логів (`tee` + `tail`) збережена.
+  - перевірено pull:
+    - `docker pull ghcr.io/aquasecurity/trivy:0.57.1` (успішно, image доступний).
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`
