@@ -137,3 +137,23 @@
   - запуском тієї ж команди, що в CI:
     - `docker run ... koalaman/shellcheck:v0.10.0 -x <scripts>`
   - результат: exit code `0` (помилки/попередження, що падали пайплайн, усунуті).
+
+### 7) CI fix: видимі логи Trivy при `exit code 1`
+
+- Оновлено [ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml):
+  - для `Trivy config` і `Trivy image` додано capture в лог-файли (`tee`):
+    - `trivy-config.log`
+    - `trivy-image.log`
+  - кроки Trivy виконуються з `continue-on-error: true` + фіксація `exit_code` у `GITHUB_OUTPUT`.
+  - додано окремі кроки `log tail` (`tail -n 200`) з `if: always()` для гарантованого виводу в GitHub Actions log.
+  - додано окремі fail-gate кроки:
+    - `Fail on Trivy config`
+    - `Fail on Trivy image`
+    які завершують job з помилкою, якщо `exit_code != 0`.
+
+- Результат:
+  - при падінні Trivy у GitHub одразу видно детальний вивід сканера;
+  - статус job залишається blocking (pipeline не стає "green" при findings/error).
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить без помилок.

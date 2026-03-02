@@ -48,9 +48,33 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work koalaman/shellcheck:v0.10.0 -x "${files[@]}"
 
       - name: Trivy config
+        id: trivy_config
+        continue-on-error: true
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.57.1 config --exit-code 1 --severity HIGH,CRITICAL --no-progress /work
+          log_file="trivy-config.log"
+          set +e
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.57.1 config --exit-code 1 --severity HIGH,CRITICAL --no-progress /work 2>&1 | tee "${log_file}"
+          trivy_rc=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trivy config log tail
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f trivy-config.log ]; then
+            echo "----- trivy-config.log (tail -200) -----"
+            tail -n 200 trivy-config.log
+          else
+            echo "trivy-config.log not found"
+          fi
+
+      - name: Fail on Trivy config
+        if: steps.trivy_config.outputs.exit_code != '0'
+        run: |
+          echo "Trivy config failed with exit code ${{ steps.trivy_config.outputs.exit_code }}"
+          exit 1
 
       - name: Local secrets hygiene checks
         run: bash ./scripts/check-secrets-hygiene.sh
@@ -100,9 +124,33 @@ jobs:
             .
 
       - name: Trivy image
+        id: trivy_image
+        continue-on-error: true
         run: |
           set -euo pipefail
-          docker run --rm aquasec/trivy:0.57.1 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "${LOCAL_SCAN_IMAGE}"
+          log_file="trivy-image.log"
+          set +e
+          docker run --rm aquasec/trivy:0.57.1 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "${LOCAL_SCAN_IMAGE}" 2>&1 | tee "${log_file}"
+          trivy_rc=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=${trivy_rc}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trivy image log tail
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f trivy-image.log ]; then
+            echo "----- trivy-image.log (tail -200) -----"
+            tail -n 200 trivy-image.log
+          else
+            echo "trivy-image.log not found"
+          fi
+
+      - name: Fail on Trivy image
+        if: steps.trivy_image.outputs.exit_code != '0'
+        run: |
+          echo "Trivy image failed with exit code ${{ steps.trivy_image.outputs.exit_code }}"
+          exit 1
 
       - name: Build and push image
         run: |
