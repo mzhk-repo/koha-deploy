@@ -167,6 +167,18 @@
     - `docker build -f memcached/Dockerfile ...` OK
     - `docker build -f rabbitmq/Dockerfile ...` OK
   - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+
+### 10) CI DX: явна перевірка Docker Hub секретів перед login
+
+- У `build-and-publish` додано preflight-крок:
+  - `Validate Docker Hub secrets`
+  - перевіряє наявність:
+    - `DOCKERHUB_USERNAME`
+    - `DOCKERHUB_TOKEN`
+  - у випадку відсутності повертає зрозумілу помилку замість cryptic `Must provide --username with --password-stdin`.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`

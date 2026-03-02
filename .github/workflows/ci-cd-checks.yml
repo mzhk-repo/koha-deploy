@@ -108,6 +108,18 @@ jobs:
           docker buildx create --name koha-builder --driver docker-container --use
           docker buildx inspect --bootstrap
 
+      - name: Validate Docker Hub secrets
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "Missing GitHub secret: DOCKERHUB_USERNAME"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Missing GitHub secret: DOCKERHUB_TOKEN"
+            exit 1
+          fi
+
       - name: Docker Hub login
         run: |
           set -euo pipefail
