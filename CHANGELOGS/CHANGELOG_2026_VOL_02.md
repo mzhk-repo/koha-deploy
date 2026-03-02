@@ -130,6 +130,22 @@
   - логіка fail-gate і виводу логів (`tee` + `tail`) збережена.
   - перевірено pull:
     - `docker pull ghcr.io/aquasecurity/trivy:0.57.1` (успішно, image доступний).
+
+### 8) CI portability: усі scan-образи в `ci-cd-checks.yml` з Docker Hub
+
+- За запитом переведено scan-утиліти на Docker Hub образи для portable запуску (GitHub / локально / інші Git CI):
+  - `TRIVY_IMAGE: aquasec/trivy:0.57.1`
+  - `HADOLINT_IMAGE: hadolint/hadolint:v2.13.1-alpine`
+  - `koalaman/shellcheck:v0.10.0` (без змін)
+  - `zricethezav/gitleaks:v8.24.2` (без змін)
+  - `anchore/syft:v1.20.0` (без змін)
+
+- Прибрано використання `ghcr.io` у `docker run` кроках цього workflow.
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` проходить.
+  - `docker pull hadolint/hadolint:v2.13.1-alpine` проходить.
+  - `docker pull aquasec/trivy:0.57.1` проходить.
   - Примітка: окремий файл `build-and-push.yml` має власну pre-existing синтаксичну проблему (`uses: *trivy_action`) і потребує окремого виправлення.
 
 ### 6) CI fix: `shellcheck` fail у `ci-checks`

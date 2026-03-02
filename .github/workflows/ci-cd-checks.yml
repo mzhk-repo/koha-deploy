@@ -20,7 +20,8 @@ env:
   IMAGE_NAME: pinokew/koha
   KOHA_VERSION: "25.05"
   LOCAL_SCAN_IMAGE: local/koha-scan:${{ github.sha }}
-  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.57.1
+  TRIVY_IMAGE: aquasec/trivy:0.57.1
+  HADOLINT_IMAGE: hadolint/hadolint:v2.13.1-alpine
 
 jobs:
   ci-checks:
@@ -39,7 +40,7 @@ jobs:
           set -euo pipefail
           mapfile -t files < <(find . -type f -name 'Dockerfile' | sort)
           [ "${#files[@]}" -gt 0 ] || { echo "No Dockerfiles found"; exit 1; }
-          docker run --rm -v "$PWD:/work" -w /work ghcr.io/hadolint/hadolint:v2.12.0-debian hadolint "${files[@]}"
+          docker run --rm -v "$PWD:/work" -w /work "${HADOLINT_IMAGE}" hadolint "${files[@]}"
 
       - name: Shellcheck
         run: |
