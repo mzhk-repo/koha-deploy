@@ -48,3 +48,18 @@
 
 - Перевірено:
   - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
+
+### 3) Повернено `Trivy Config Scan` у fast-core CI
+
+- За результатами ревізії спрощеного workflow повернуто базовий security gate:
+  - `Trivy config` (тільки config scan, без image scan).
+
+- Оновлено:
+  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
+  - додано:
+    - env `TRIVY_IMAGE` (pinned digest);
+    - крок `Trivy config scan` у `ci-checks`:
+      - `trivy config --skip-check-update --exit-code 1 --severity HIGH,CRITICAL /work`
+
+- Перевірено:
+  - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.

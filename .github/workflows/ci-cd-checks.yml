@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  TRIVY_IMAGE: aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa
   HADOLINT_IMAGE: hadolint/hadolint@sha256:84c2f9088a8cb0ea2bd16b5349186770d16441e77eec1a1d1e0574cf7dff47ac
   SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
   GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
@@ -65,6 +66,11 @@ jobs:
         run: |
           set -euo pipefail
           docker compose --env-file .env.example -f docker-compose.yaml config -q
+
+      - name: Trivy config scan
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" config --skip-check-update --exit-code 1 --severity HIGH,CRITICAL /work
 
       - name: Env template validation
         run: bash ./scripts/verify-env.sh --example-only
