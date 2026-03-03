@@ -26,6 +26,7 @@ if ! parse_common_args "$@"; then
 fi
 
 # verify is read-only; force dry mode to skip backup logic in helper
+# shellcheck disable=SC2034
 DRY_RUN=true
 prepare_live_context
 
