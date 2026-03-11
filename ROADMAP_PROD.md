@@ -78,18 +78,72 @@ DoD:
 1. Production запускається тільки на immutable images.
 2. Кожен реліз має SBOM і пройдений image scan. -->
 
-## 1.5 Спостережуваність (мінімум)
+# 2) Performance baseline (обов'язково перед піковим навантаженням)
+
+## 2.0 Product Analytics: збір продуктових метрик (GA4 / Matomo / інші)
 Що робимо:
-1. Центральний збір логів (наприклад, Promtail + Loki + Grafana або ELK).
-2. Базові метрики: host, containers, MariaDB, RabbitMQ, Elasticsearch.
-3. Алерти: healthcheck down, 5xx spike, low disk, high memory/cpu, backup/restore fail.
-4. Uptime моніторинг OPAC/Staff/API з нотифікаціями.
+1. Визначити цілі збору аналітики: продуктова аналітика (OPAC/Staff usage), funnels, та RUM timings для вимірювання клієнтської продуктивності.
+2. Оцінити варіанти та прийняти рішення:
+	- GA4 (cloud) — швидкий старт, багаті можливості, потребує privacy/consent-плану.
+	- Matomo (self-hosted) — контроль над даними, GDPR-friendly, додаткове інфраструктурне навантаження.
+	- Гібрид: GA4 для агрегованих метрик + Matomo для PII-free детальної аналітики.
+3. Підготувати event map: ключові події OPAC (search, checkout, hold), staff actions (item edit, patron management), та performance events (first paint, TTFB, resource timings).
+4. Privacy & Consent: інтегрувати CMP/consent banner, реалізувати opt-in/opt-out, анонімізацію IP, та налаштування retention.
+5. Інструментація:
+	- Frontend (OPAC): tag manager або minimal client SDK (GA4 gtag / Matomo JS) для `page_view`, `search`, RUM timings.
+	- Staff UI & API: server-side tracking (Measurement Protocol / Matomo HTTP tracking) для подій, що не проходять через клієнт.
+6. Тестування в staging: перевірити payloads, sampling, opt-out behavior, та коректність event map на тестових сценаріях.
+7. Dashboards: Usage Overview, Funnels, Top queries; визначити базові звіти для product team.
+8. Rollout: staging (2 тижні) → Canary (10%) → Full; визначити критерії відкату.
 
 DoD:
-1. Оператор отримує алерт раніше за користувача.
-2. Є дашборди для інцидент-діагностики без ручного SSH "наосліп".
+1. Вибране рішення (GA4/Matomo/гібрид) з documented privacy plan.
+2. Event map і інструментація для ключових подій у staging.
+3. Базові дашборди для product metrics.
+4. Rollout-план з критеріями відкату.
 
-# 2) Performance baseline (обов'язково перед піковим навантаженням)
+## 2.1 Observability: логи, метрики, трасування та алерти
+Що робимо:
+1. Centralized logs: Promtail + Loki + Grafana або ELK для агрегування та індексації логів.
+2. Backend metrics: Prometheus exporters для host, containers, MariaDB, RabbitMQ, Elasticsearch та application metrics.
+3. Tracing: додати розподілене трасування (Jaeger/Tempo) для ключових транзакцій при потребі.
+4. Alerts: healthcheck down, 5xx spike, low disk, high memory/cpu, backup/restore fail.
+5. Uptime monitoring: OPAC/Staff/API з нотифікаціями (pagerduty/email/ops channel).
+6. Dashboards: Performance timings (RUM + server metrics), Errors/API failures (logs+metrics), Infrastructure health.
+7. Тестування в staging: перевірити alerting paths, log retention, і кореляцію логів/метрик.
+
+DoD:
+1. Centralized logs і backend metrics з базовими дашбордами доступні в staging.
+2. Алерти налаштовані і протестовані (симуляція падіння/спайків).
+3. Є кореляція між product-analytics і backend metrics через common ids/timestamps.
+
+## 2.2 MariaDB tuning
+Що робимо:
+1. Ввести параметризований тюнінг через env або окремий конфіг: `max_connections`, `innodb_buffer_pool_size`, `innodb_log_file_size`.
+2. Увімкнути slow query log з ротацією.
+3. Зафіксувати допустимі пороги latency для ключових запитів Koha.
+
+DoD:
+1. p95 DB latency і p95 web response в межах погоджених SLO.
+2. Є список топ-10 повільних запитів і план оптимізації.
+
+## 2.3 Memcached tuning
+Що робимо:
+1. Задати memory limit (наприклад `-m 256`) і `-c` (max connections).
+2. Моніторити hit ratio і eviction rate.
+
+DoD:
+1. Hit ratio стабільно на цільовому рівні (узгодити, наприклад >= 0.80).
+2. Немає масових eviction під робочим навантаженням.
+
+## 2.4 Koha/Plack workers
+Що робимо:
+1. Винести параметри workers/max_requests у SSOT (`.env`).
+2. Провести короткий load test на типових сценаріях OPAC і staff.
+
+DoD:
+1. Пікові сценарії не викликають деградацію або рестарти контейнера.
+2. Є рекомендовані production-значення workers для поточної інфраструктури.
 
 ## 2.1 MariaDB tuning
 Що робимо:

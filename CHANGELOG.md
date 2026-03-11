@@ -6,8 +6,8 @@
 
 1. [CHANGELOG_2026_VOL_04.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_04.md)
    - Статус: active
-   - Рядків: ~20
-   - Контекст: продовження CI/CD та deploy-автоматизації після ротації тому
+   - Рядків: ~85
+   - Контекст: CI/CD спрощення, Trivy config gate, документація (architecture/readme)
 
 2. [CHANGELOG_2026_VOL_03.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_03.md)
    - Статус: archived
