@@ -35,9 +35,9 @@ env:
   DEPLOY_PROJECT_DIR: /home/pinokew/Koha/koha-deploy
   DEPLOY_BRANCH: main
   DEPLOY_COMPOSE_FILE: docker-compose.yaml
-  DEPLOY_PULL_SERVICES: db koha tunnel
+  DEPLOY_PULL_SERVICES: db koha
   DEPLOY_BUILD_SERVICES: rabbitmq es memcached
-  DEPLOY_SERVICES: db es rabbitmq memcached koha tunnel
+  DEPLOY_SERVICES: db es rabbitmq memcached koha
   DEPLOY_ENV_VERIFY_SCRIPT: scripts/verify-env.sh
   DEPLOY_BOOTSTRAP_SCRIPT: scripts/bootstrap-live-configs.sh
   DEPLOY_BOOTSTRAP_MODE: --all

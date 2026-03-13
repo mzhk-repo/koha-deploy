@@ -277,3 +277,21 @@
 - Перевірено:
   - документація відповідає актуальному `docker-compose.yaml` і `scripts/bootstrap-live-configs.sh`;
   - навігаційні посилання в README узгоджені зі структурою репозиторію.
+
+### 9) Fix CD-deploy after tunnel removal: прибрано `tunnel` з GitHub Actions service lists
+
+- Контекст:
+  - після міграції на edge-модель `external Cloudflare Tunnel -> Traefik -> Koha` локальний сервіс `tunnel` видалено з `docker-compose.yaml`;
+  - CD job у `.github/workflows/ci-cd-checks.yml` все ще посилався на `tunnel`, що спричиняло падіння deploy через SSH:
+    - `no such service: tunnel`.
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
+
+- Зміни:
+  - `DEPLOY_PULL_SERVICES`: `db koha tunnel` -> `db koha`;
+  - `DEPLOY_SERVICES`: `db es rabbitmq memcached koha tunnel` -> `db es rabbitmq memcached koha`.
+
+- Перевірено:
+  - конфіг workflow узгоджений з фактичним складом сервісів у `docker-compose.yaml`;
+  - root-cause помилки `no such service: tunnel` усунуто на рівні CI/CD конфігурації.
