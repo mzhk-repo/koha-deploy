@@ -21,7 +21,7 @@ Usage: ./scripts/bootstrap-live-configs.sh [options]
 
 Module selection:
   --all                 Run all modules (default if none selected)
-  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,domain-prefs,verify
+  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,domain-prefs,opac-matomo,csp-report-only,verify
   --module NAME         Repeatable module selector (same names as above)
   --list-modules        Print available modules and exit
 
@@ -39,7 +39,7 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(timezone trusted-proxies memcached message-broker smtp domain-prefs verify)
+MODULE_ORDER=(timezone trusted-proxies memcached message-broker smtp domain-prefs opac-matomo csp-report-only verify)
 declare -A MODULE_SCRIPT=(
   [timezone]="patch-koha-conf-xml-timezone.sh"
   [trusted-proxies]="patch-koha-conf-xml-trusted-proxies.sh"
@@ -47,6 +47,8 @@ declare -A MODULE_SCRIPT=(
   [message-broker]="patch-koha-conf-xml-message-broker.sh"
   [smtp]="patch-koha-conf-xml-smtp.sh"
   [domain-prefs]="patch-koha-sysprefs-domain.sh"
+  [opac-matomo]="patch-koha-sysprefs-opac-matomo.sh"
+  [csp-report-only]="patch-koha-apache-csp-report-only.sh"
   [verify]="patch-koha-conf-xml-verify.sh"
 )
 

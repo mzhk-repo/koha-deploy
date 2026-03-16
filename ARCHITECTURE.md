@@ -31,9 +31,13 @@
 ## 3) Мережева модель
 
 1. Внутрішня мережа Koha-стеку: `koha-deploy_kohanet`.
-2. Traefik підключається до `koha-deploy_kohanet` як gateway.
-3. Міжсервісний доступ тільки внутрішніми DNS-іменами (`db`, `es`, `rabbitmq`, `memcached`).
-4. Публічний трафік до Koha не відкривається напряму через host ports.
+2. Зовнішня edge-мережа: `proxy-net` (на боці Traefik stack).
+3. `koha` має dual-homing (`koha-deploy_kohanet` + `proxy-net`), де:
+  - `kohanet` використовується тільки для внутрішніх sidecar-сервісів (`db`, `es`, `rabbitmq`, `memcached`);
+  - `proxy-net` використовується тільки для north-south трафіку `Traefik -> koha`.
+4. Traefik не підключається до `koha-deploy_kohanet`, щоб не мати мережевого доступу до внутрішніх сервісів Koha-стеку.
+5. Міжсервісний доступ Koha sidecar-и залишають тільки внутрішні DNS-імена (`db`, `es`, `rabbitmq`, `memcached`).
+6. Публічний трафік до Koha не відкривається напряму через host ports.
 
 ## 4) Конфігураційна модель
 
