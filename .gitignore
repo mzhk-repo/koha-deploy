@@ -9,7 +9,7 @@ koha_data_backup.sql
 rabbitmq_plugins
 files/docker/templates
 
-archive/
+archive
 NEW_CHAT_START_HERE.md
 AGENTS.md
 IntranetUserJS.js

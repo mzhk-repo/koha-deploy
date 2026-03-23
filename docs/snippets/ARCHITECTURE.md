@@ -55,6 +55,8 @@
 - `message-broker`
 - `smtp`
 - `domain-prefs`
+- `identity-provider`
+- `oidc-prefs`
 - `verify`
 
 ## 5) Trusted proxy / real IP модель

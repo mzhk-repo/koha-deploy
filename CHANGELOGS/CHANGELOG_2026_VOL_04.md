@@ -502,3 +502,87 @@
   - локально в контейнері (`127.0.0.1:8082`) присутній header `Content-Security-Policy-Report-Only`;
   - публічно (`https://library.pinokew.buzz/...`) присутній header `content-security-policy-report-only`;
   - OPAC DevTools Network після включення CSP: `matomo.js` та `js/ping` продовжують успішно завантажуватись.
+
+### 18) CSP enforcement smoke-check: виявлено runtime регресії, повернення в safe-режим (report-only у SSOT)
+
+- Контекст:
+  - після переходу в enforcement під час browser smoke-check зафіксовано блокування `unsafe-eval` (Gettext/i18n) і Cloudflare beacon script;
+  - Matomo (`matomo.js` + `js/ping`) продовжував працювати.
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
+  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
+  - [/home/pinokew/Koha/koha-deploy/apache/csp-report-only.conf](/home/pinokew/Koha/koha-deploy/apache/csp-report-only.conf)
+
+- Зміни:
+  - для сумісності додано до `CSP_REPORT_ONLY_SCRIPT_SRC`:
+    - `'unsafe-eval'`
+    - `https://static.cloudflareinsights.com`
+  - `CSP_MODE` повернуто в `report-only` у `.env`/`.env.example` (safe rollback для стабілізації UX, поки завершуємо tuning).
+
+- Перевірено (services/network/data):
+  - `bash ./scripts/verify-env.sh` — OK;
+  - `bash ./scripts/bootstrap-live-configs.sh --modules csp-report-only` — OK;
+  - у контейнері `koha` згенерований `zz-koha-csp-report-only.conf` містить `Content-Security-Policy-Report-Only` з `unsafe-eval` та `static.cloudflareinsights.com`;
+  - origin header на `127.0.0.1:8081` все ще містить enforced `Content-Security-Policy` без нових allowlist (ймовірно, окреме джерело/override поза керованим шаблоном).
+
+- Висновок:
+  - для production-safe переходу до enforcement потрібно окремо ідентифікувати джерело enforced CSP у runtime (не збігається з керованим файлом `zz-koha-csp-report-only.conf`) і лише потім фіналізувати CSP 2.4.
+
+### 19) OIDC UI налаштування винесено в IaC: новий оркестрований модуль `oidc-prefs`
+
+- Контекст:
+  - OIDC параметри були налаштовані вручну через Koha UI;
+  - для узгодження з SSOT/IaC додано керування через deploy-репозиторій та env.
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-oidc.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-oidc.sh)
+  - [/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh](/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh)
+  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
+  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
+  - [/home/pinokew/Koha/koha-deploy/README.md](/home/pinokew/Koha/koha-deploy/README.md)
+  - [/home/pinokew/Koha/koha-deploy/docs/snippets/ARCHITECTURE.md](/home/pinokew/Koha/koha-deploy/docs/snippets/ARCHITECTURE.md)
+
+- Зміни:
+  - додано bootstrap-модуль `oidc-prefs` в `bootstrap-live-configs.sh`;
+  - додано окремий скрипт `patch-koha-sysprefs-oidc.sh` з режимами:
+    - `--discover`: показує поточні OIDC-like sysprefs (`oidc|openid|oauth|sso`);
+    - `--apply`: застосовує env-мапінг `KOHA_OIDC_PREF__<SystemPreference>=<value>`;
+    - `--verify`: звіряє DB значення з env.
+  - додано env SSOT ключі для OIDC-оркестрації:
+    - `KOHA_OIDC_INCLUDE_EMPTY` (запобігання випадковому wipe порожніми значеннями);
+    - приклади `KOHA_OIDC_PREF__*` для типових OIDC sysprefs.
+
+- Результат:
+  - OIDC sysprefs більше не залежать від ручного UI-clickops;
+  - секретні OIDC значення можуть керуватися тільки через env/secret-store та застосовуватись оркестратором.
+
+### 20) Identity Provider (MS365) винесено в IaC + прибрано Google OIDC залежності
+
+- Контекст:
+  - Identity Provider був налаштований вручну через Koha UI;
+  - потрібно перевести в SSOT/IaC і прибрати Google OIDC-спадок.
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-identity-provider.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-identity-provider.sh)
+  - [/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh](/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh)
+  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
+  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
+  - [/home/pinokew/Koha/koha-deploy/README.md](/home/pinokew/Koha/koha-deploy/README.md)
+  - [/home/pinokew/Koha/koha-deploy/docs/snippets/ARCHITECTURE.md](/home/pinokew/Koha/koha-deploy/docs/snippets/ARCHITECTURE.md)
+  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-oidc.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-oidc.sh)
+
+- Зміни:
+  - додано новий bootstrap-модуль `identity-provider`, який керує таблицями `identity_providers` та `identity_provider_domains` з env;
+  - зчитано поточну MS365 конфігурацію з БД і винесено всі наявні поля в `.env`:
+    - провайдер: `AzureID` (`OIDC`, `matchpoint=userid`, `description=MS365`);
+    - config: `key`, `secret`, `well_known_url`, `scope`;
+    - mapping: `userid`, `email`, `firstname`, `surname`;
+    - domain rules: `domain=*`, `update_on_auth=1`, `default_library_id=CPL`, `default_category_id=ST`, `allow_opac=1`, `allow_staff=1`, `auto_register_opac=1`, `auto_register_staff=0`.
+  - додано автоматичне відключення/очищення Google OIDC sysprefs (керується `KOHA_DISABLE_GOOGLE_OIDC=true`).
+
+- Перевірено (data/services):
+  - `bash scripts/patch/patch-koha-identity-provider.sh --discover --dry-run` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --module identity-provider` — OK;
+  - у БД підтверджено актуальні значення `identity_providers`/`identity_provider_domains` для `AzureID`;
+  - Google sysprefs підтверджено у вимкненому/очищеному стані (`GoogleOpenIDConnect=0`, `GoogleOpenIDConnectAutoRegister=0`, `RESTOAuth2ClientCredentials=0`, решта очищені).

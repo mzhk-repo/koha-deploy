@@ -298,6 +298,7 @@ koha
 | **Trusted Proxies** | `KOHA_TRUSTED_PROXIES` | `.env` |
 | **Cloudflare** | `CLOUDFLARE_TOKEN` | external tunnel stack / secret store |
 | **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SSL_MODE` | `.env` (secret) |
+| **OIDC Sysprefs** | `KOHA_OIDC_PREF__*`, `KOHA_OIDC_INCLUDE_EMPTY` | `.env` (secret) |
 | **Volume Paths** | `VOL_DB_PATH`, `VOL_KOHA_CONF`, `VOL_KOHA_DATA` | `.env` |
 | **Resource Limits** | `KOHA_MEM_LIMIT`, `DB_CPUS`, `ES_MEM_LIMIT` | `.env` |
 | **Logging** | `LOG_MAX_SIZE`, `LOG_MAX_FILE` | `.env` |
@@ -325,6 +326,8 @@ bash scripts/bootstrap-live-configs.sh --help
 - `patch-koha-conf-xml-timezone.sh` — Часовий пояс
 - `patch-koha-conf-xml-trusted-proxies.sh` — trusted proxies chain у koha-conf.xml
 - `patch-koha-sysprefs-domain.sh` — OPAC/Staff URL sysprefs з env
+- `patch-koha-identity-provider.sh` — Identity Provider (MS365/OIDC) з env у таблиці `identity_providers`/`identity_provider_domains`
+- `patch-koha-sysprefs-oidc.sh` — OIDC sysprefs discovery/apply/verify з env (`KOHA_OIDC_PREF__*`)
 - `patch-koha-templates.sh` — deprecated wrapper на bootstrap-live-configs
 
 ---
