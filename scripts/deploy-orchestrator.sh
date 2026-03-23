@@ -17,13 +17,6 @@ else
   log "verify-env.sh not found, skipping"
 fi
 
-if [[ -x "./scripts/init-volumes.sh" ]]; then
-  log "Running init-volumes.sh"
-  bash ./scripts/init-volumes.sh
-else
-  log "init-volumes.sh not found, skipping"
-fi
-
 if [[ -x "./scripts/bootstrap-live-configs.sh" ]]; then
   log "bootstrap-live-configs.sh detected; run it separately after deploy if post-deploy patching is required"
 fi

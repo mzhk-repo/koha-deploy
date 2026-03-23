@@ -45,6 +45,7 @@ USAGE
 
 parse_args() {
   local rest=()
+  # shellcheck disable=SC2034
   local arg
 
   while [ "$#" -gt 0 ]; do
