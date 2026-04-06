@@ -1,0 +1,99 @@
+services:
+  koha:
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    depends_on: !reset null
+    environment:
+      DB_HOST: koha_db
+      MYSQL_SERVER: koha_db
+      MB_HOST: koha_rabbitmq
+      ELASTICSEARCH_HOST: koha_es:9200
+      MEMCACHED_SERVERS: koha_memcached:11211
+    healthcheck:
+      start_period: 5m
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  db:
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  rabbitmq:
+    build: !reset null
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  es:
+    build: !reset null
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  memcached:
+    build: !reset null
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+networks:
+  kohanet:
+    driver: overlay
