@@ -163,6 +163,40 @@ db_query() {
     db mariadb -N -B -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
 }
 
+normalize_fk_value_for_identity_provider_domain() {
+  local env_key="$1"
+  local fk_column="$2"
+  local raw_value="$3"
+  local escaped_value ref_table ref_column exists_sql exists
+
+  [ -n "${raw_value}" ] || {
+    printf ''
+    return 0
+  }
+
+  escaped_value="$(sql_escape "${raw_value}")"
+
+  ref_table="$(db_query "SELECT IFNULL(REFERENCED_TABLE_NAME,'') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='${DB_NAME}' AND TABLE_NAME='identity_provider_domains' AND COLUMN_NAME='${fk_column}' LIMIT 1;")"
+  ref_column="$(db_query "SELECT IFNULL(REFERENCED_COLUMN_NAME,'') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='${DB_NAME}' AND TABLE_NAME='identity_provider_domains' AND COLUMN_NAME='${fk_column}' LIMIT 1;")"
+
+  if [ -z "${ref_table}" ] || [ -z "${ref_column}" ]; then
+    warn "${env_key}: FK metadata for identity_provider_domains.${fk_column} not found; applying value '${raw_value}' without pre-validation"
+    printf '%s' "${escaped_value}"
+    return 0
+  fi
+
+  exists_sql="SELECT COUNT(*) FROM \`${ref_table}\` WHERE \`${ref_column}\`='${escaped_value}' LIMIT 1;"
+  exists="$(db_query "${exists_sql}")"
+
+  if [[ "${exists}" =~ ^[0-9]+$ ]] && [ "${exists}" -ge 1 ]; then
+    printf '%s' "${escaped_value}"
+    return 0
+  fi
+
+  warn "${env_key}='${raw_value}' not found in ${ref_table}.${ref_column}; using NULL to avoid FK violation"
+  printf ''
+}
+
 discover_identity_provider() {
   log "Discovering identity provider config"
 
@@ -176,6 +210,7 @@ apply_identity_provider() {
   local c_key c_secret c_well_known c_scope
   local m_userid m_email m_firstname m_surname
   local domain update_on_auth default_library_id default_category_id allow_opac allow_staff auto_register_opac auto_register_staff
+  local default_library_id_raw default_category_id_raw
   local idp_id domain_id
 
   code="$(sql_escape "${KOHA_IDP_CODE}")"
@@ -196,8 +231,10 @@ apply_identity_provider() {
 
   domain="$(sql_escape "${KOHA_IDP_DOMAIN}")"
   update_on_auth="${KOHA_IDP_UPDATE_ON_AUTH}"
-  default_library_id="$(sql_escape "${KOHA_IDP_DEFAULT_LIBRARY_ID}")"
-  default_category_id="$(sql_escape "${KOHA_IDP_DEFAULT_CATEGORY_ID}")"
+  default_library_id_raw="${KOHA_IDP_DEFAULT_LIBRARY_ID}"
+  default_category_id_raw="${KOHA_IDP_DEFAULT_CATEGORY_ID}"
+  default_library_id="$(normalize_fk_value_for_identity_provider_domain "KOHA_IDP_DEFAULT_LIBRARY_ID" "default_library_id" "${default_library_id_raw}")"
+  default_category_id="$(normalize_fk_value_for_identity_provider_domain "KOHA_IDP_DEFAULT_CATEGORY_ID" "default_category_id" "${default_category_id_raw}")"
   allow_opac="${KOHA_IDP_ALLOW_OPAC}"
   allow_staff="${KOHA_IDP_ALLOW_STAFF}"
   auto_register_opac="${KOHA_IDP_AUTO_REGISTER_OPAC}"
@@ -312,6 +349,7 @@ WHERE variable IN (
 
 verify_identity_provider() {
   local code idp_id protocol matchpoint
+  local google_openid_pref
 
   code="$(sql_escape "${KOHA_IDP_CODE}")"
   idp_id="$(db_query "SELECT identity_provider_id FROM identity_providers WHERE code='${code}' LIMIT 1;")"
@@ -336,7 +374,16 @@ verify_identity_provider() {
   [ "$(db_query "SELECT COUNT(*) FROM identity_provider_domains WHERE identity_provider_id=${idp_id} AND domain='$(sql_escape "${KOHA_IDP_DOMAIN}")';")" -ge 1 ] || die "identity_provider_domains row not found for configured domain"
 
   if [ "${KOHA_DISABLE_GOOGLE_OIDC}" = "true" ]; then
-    [ "$(db_query "SELECT value FROM systempreferences WHERE variable='GoogleOpenIDConnect' LIMIT 1;")" = "0" ] || die "GoogleOpenIDConnect is not 0"
+    google_openid_pref="$(db_query "SELECT IFNULL((SELECT value FROM systempreferences WHERE variable='GoogleOpenIDConnect' LIMIT 1),'');")"
+    case "${google_openid_pref}" in
+      0) ;;
+      "")
+        warn "GoogleOpenIDConnect preference not found; skipping strict 0-check"
+        ;;
+      *)
+        die "GoogleOpenIDConnect is not 0 (got '${google_openid_pref}')"
+        ;;
+    esac
   fi
 
   log "Verification passed for provider ${KOHA_IDP_CODE}"

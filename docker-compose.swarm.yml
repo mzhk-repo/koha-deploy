@@ -6,11 +6,11 @@ services:
     restart: !reset null
     depends_on: !reset null
     environment:
-      DB_HOST: koha_db
-      MYSQL_SERVER: koha_db
-      MB_HOST: koha_rabbitmq
-      ELASTICSEARCH_HOST: koha_es:9200
-      MEMCACHED_SERVERS: koha_memcached:11211
+      DB_HOST: db
+      MYSQL_SERVER: db
+      MB_HOST: rabbitmq
+      ELASTICSEARCH_HOST: es:9200
+      MEMCACHED_SERVERS: memcached:11211
     healthcheck:
       start_period: 5m
       interval: 30s
