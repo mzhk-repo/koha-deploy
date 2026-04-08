@@ -187,7 +187,10 @@ fi
 
 if ${needs_restart}; then
   log "Restarting koha to apply patched live config"
-  docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" up -d koha >/dev/null
+  if ! docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" restart koha >/dev/null; then
+    log "koha container not running yet; starting with up -d"
+    docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" up -d koha >/dev/null
+  fi
   log "Restart complete"
 else
   log "No patch module requiring restart was run"

@@ -26,14 +26,49 @@ fi
 
 load_env_file
 
-OPAC_HOST="${KOHA_OPAC_SERVERNAME:-}"
-STAFF_HOST="${KOHA_INTRANET_SERVERNAME:-}"
+normalize_url() {
+  local url="$1"
+  [ -n "${url}" ] || return 1
 
-[ -n "${OPAC_HOST}" ] || die "KOHA_OPAC_SERVERNAME must be set"
-[ -n "${STAFF_HOST}" ] || die "KOHA_INTRANET_SERVERNAME must be set"
+  case "${url}" in
+    http://*|https://*) ;;
+    *) url="https://${url}" ;;
+  esac
 
-OPAC_URL="https://${OPAC_HOST}/"
-STAFF_URL="https://${STAFF_HOST}/"
+  case "${url}" in
+    */) ;;
+    *) url="${url}/" ;;
+  esac
+
+  printf '%s' "${url}"
+}
+
+sql_escape() {
+  local v="$1"
+  v="${v//\\/\\\\}"
+  v="${v//\'/\'\'}"
+  printf '%s' "${v}"
+}
+
+OPAC_URL_RAW="${OPACBaseURL:-}"
+STAFF_URL_RAW="${staffClientBaseURL:-}"
+
+if [ -z "${OPAC_URL_RAW}" ]; then
+  OPAC_HOST="${KOHA_OPAC_SERVERNAME:-}"
+  [ -n "${OPAC_HOST}" ] || die "Set OPACBaseURL or KOHA_OPAC_SERVERNAME in ${ENV_FILE}"
+  OPAC_URL_RAW="${OPAC_HOST}"
+fi
+
+if [ -z "${STAFF_URL_RAW}" ]; then
+  STAFF_HOST="${KOHA_INTRANET_SERVERNAME:-}"
+  [ -n "${STAFF_HOST}" ] || die "Set staffClientBaseURL or KOHA_INTRANET_SERVERNAME in ${ENV_FILE}"
+  STAFF_URL_RAW="${STAFF_HOST}"
+fi
+
+OPAC_URL="$(normalize_url "${OPAC_URL_RAW}")"
+STAFF_URL="$(normalize_url "${STAFF_URL_RAW}")"
+OPAC_URL_SQL="$(sql_escape "${OPAC_URL}")"
+STAFF_URL_SQL="$(sql_escape "${STAFF_URL}")"
 
 log "Patching systempreferences: OPACBaseURL=${OPAC_URL}, staffClientBaseURL=${STAFF_URL}"
 
@@ -43,8 +78,8 @@ if ${DRY_RUN}; then
 fi
 
 SQL="
-UPDATE systempreferences SET value='${OPAC_URL}' WHERE variable='OPACBaseURL';
-UPDATE systempreferences SET value='${STAFF_URL}' WHERE variable='staffClientBaseURL';
+UPDATE systempreferences SET value='${OPAC_URL_SQL}' WHERE variable='OPACBaseURL';
+UPDATE systempreferences SET value='${STAFF_URL_SQL}' WHERE variable='staffClientBaseURL';
 SELECT variable, value FROM systempreferences
 WHERE variable IN ('OPACBaseURL','staffClientBaseURL')
 ORDER BY variable;
