@@ -5,12 +5,55 @@ services:
     pids_limit: !reset null
     restart: !reset null
     depends_on: !reset null
-    environment:
-      DB_HOST: db
-      MYSQL_SERVER: db
-      MB_HOST: rabbitmq
-      ELASTICSEARCH_HOST: es:9200
-      MEMCACHED_SERVERS: memcached:11211
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        while IFS= read -r $$line || [ -n "$$line" ]; do
+          case "$$line" in
+            ""|\#*) continue ;;
+          esac
+          export "$$line"
+        done < /run/secrets/app_env_payload
+        if [ -z "$${MYSQL_PASSWORD:-}" ] && [ -n "$${DB_PASS:-}" ]; then
+          export MYSQL_PASSWORD="$${DB_PASS}"
+        fi
+        if [ -z "$${MB_PASS:-}" ] && [ -n "$${RABBITMQ_PASS:-}" ]; then
+          export MB_PASS="$${RABBITMQ_PASS}"
+        fi
+        exec "$$@"
+      - --
+    env_file: !reset []
+    environment: !override
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_DOMAIN: ${KOHA_DOMAIN}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      KOHA_OPAC_PORT: ${KOHA_OPAC_PORT}
+      KOHA_INTRANET_PORT: ${KOHA_INTRANET_PORT}
+      KOHA_OPAC_PREFIX: ${KOHA_OPAC_PREFIX:-}
+      KOHA_OPAC_SUFFIX: ${KOHA_OPAC_SUFFIX:-}
+      KOHA_INTRANET_PREFIX: ${KOHA_INTRANET_PREFIX:-}
+      KOHA_INTRANET_SUFFIX: ${KOHA_INTRANET_SUFFIX:--intra}
+      KOHA_OPAC_SERVERNAME: ${KOHA_OPAC_SERVERNAME:-}
+      KOHA_INTRANET_SERVERNAME: ${KOHA_INTRANET_SERVERNAME:-}
+      TZ: ${KOHA_TIMEZONE}
+      KOHA_LANGS: ${KOHA_LANGS:-}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
+      MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
+      KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
+      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
+      KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
     healthcheck:
       start_period: 5m
       interval: 30s
@@ -32,6 +75,17 @@ services:
     mem_limit: !reset null
     pids_limit: !reset null
     restart: !reset null
+    environment: !override
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      TZ: ${KOHA_TIMEZONE}
+    secrets:
+      - source: db_password
+        target: db_password
+      - source: db_root_password
+        target: db_root_password
     deploy:
       replicas: 1
       restart_policy:
@@ -49,6 +103,19 @@ services:
     mem_limit: !reset null
     pids_limit: !reset null
     restart: !reset null
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        export RABBITMQ_DEFAULT_PASS="$(cat /run/secrets/rabbitmq_password)"
+        exec docker-entrypoint.sh rabbitmq-server
+      - --
+    env_file: !reset []
+    environment: !override
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+    secrets:
+      - source: rabbitmq_password
+        target: rabbitmq_password
     deploy:
       replicas: 1
       restart_policy:
@@ -97,3 +164,17 @@ services:
 networks:
   kohanet:
     driver: overlay
+
+secrets:
+  app_env_payload:
+    external: true
+    name: ${KOHA_APP_ENV_PAYLOAD_SECRET_NAME:-koha_app_env_payload_dev_v1}
+  db_password:
+    external: true
+    name: ${KOHA_DB_PASSWORD_SECRET_NAME:-koha_db_password_dev_v1}
+  db_root_password:
+    external: true
+    name: ${KOHA_DB_ROOT_PASSWORD_SECRET_NAME:-koha_db_root_password_dev_v1}
+  rabbitmq_password:
+    external: true
+    name: ${RABBITMQ_PASSWORD_SECRET_NAME:-koha_rabbitmq_password_dev_v1}
