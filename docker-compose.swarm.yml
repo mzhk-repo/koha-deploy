@@ -168,13 +168,13 @@ networks:
 secrets:
   app_env_payload:
     external: true
-    name: ${KOHA_APP_ENV_PAYLOAD_SECRET_NAME:-koha_app_env_payload_dev_v1}
+    name: ${KOHA_APP_ENV_PAYLOAD_SECRET_NAME}
   db_password:
     external: true
-    name: ${KOHA_DB_PASSWORD_SECRET_NAME:-koha_db_password_dev_v1}
+    name: ${KOHA_DB_PASSWORD_SECRET_NAME}
   db_root_password:
     external: true
-    name: ${KOHA_DB_ROOT_PASSWORD_SECRET_NAME:-koha_db_root_password_dev_v1}
+    name: ${KOHA_DB_ROOT_PASSWORD_SECRET_NAME}
   rabbitmq_password:
     external: true
-    name: ${RABBITMQ_PASSWORD_SECRET_NAME:-koha_rabbitmq_password_dev_v1}
+    name: ${RABBITMQ_PASSWORD_SECRET_NAME}
