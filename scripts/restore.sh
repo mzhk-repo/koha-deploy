@@ -6,7 +6,7 @@ umask 027
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENVIRONMENT_ARG=""
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
@@ -20,11 +20,10 @@ is_true() {
 }
 
 load_env() {
-  [ -f "${ENV_FILE}" ] || die ".env not found: ${ENV_FILE}"
-  set -a
-  # shellcheck disable=SC1090
-  . "${ENV_FILE}"
-  set +a
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
+  load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
 }
 
 usage() {
@@ -41,6 +40,7 @@ Options:
   --skip-reindex               Skip koha-elasticsearch --rebuild
   --no-verify                  Skip post-restore verification
   --yes                        Do not wait 5 seconds confirmation window
+  --env dev|prod               Environment to decrypt (default: SERVER_ENV)
   --help                       Show this help
 USAGE
 }
@@ -291,7 +291,16 @@ verify_restore() {
 }
 
 main() {
-  load_env
+  for arg in "$@"; do
+    case "${arg}" in
+      --help|-h)
+        usage
+        exit 0
+        ;;
+    esac
+  done
+
+  load_env "$@"
 
   RESTORE_SOURCE_DIR="${RESTORE_SOURCE_DIR:-}"
   RESTORE_ES_DATA="${RESTORE_ES_DATA:-false}"
@@ -312,12 +321,17 @@ main() {
       --skip-reindex) RESTORE_REINDEX="false"; shift ;;
       --no-verify) RESTORE_VERIFY="false"; shift ;;
       --yes) ASSUME_YES="true"; shift ;;
-      --help|-h) usage; exit 0 ;;
+      --env)
+        shift
+        [ "$#" -gt 0 ] || die "--env requires value"
+        shift
+        ;;
+      --env=*) shift ;;
       *) die "Unknown option: $1" ;;
     esac
   done
 
-  [ -n "${RESTORE_SOURCE_DIR}" ] || die "RESTORE_SOURCE_DIR is empty (use --source or .env)"
+  [ -n "${RESTORE_SOURCE_DIR}" ] || die "RESTORE_SOURCE_DIR is empty (use --source or env.${AUTONOMOUS_ENVIRONMENT}.enc)"
 
   VOL_DB_PATH="${VOL_DB_PATH:?VOL_DB_PATH is required}"
   VOL_KOHA_CONF="${VOL_KOHA_CONF:?VOL_KOHA_CONF is required}"

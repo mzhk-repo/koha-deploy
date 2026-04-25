@@ -22,6 +22,74 @@ detect_compose_file() {
   fi
 }
 
+run_script() {
+  local description="$1"
+  local script_path="$2"
+  shift 2
+
+  if [[ -x "${script_path}" ]]; then
+    log "Running ${description}: ${script_path}"
+    "${script_path}" "$@"
+  elif [[ -f "${script_path}" ]]; then
+    log "Running ${description} via bash: ${script_path}"
+    bash "${script_path}" "$@"
+  else
+    log "ERROR: ${description} script not found: ${script_path}"
+    exit 1
+  fi
+}
+
+run_validation_scripts() {
+  local compose_file="$1"
+
+  COMPOSE_FILE="${compose_file}" run_script "env template validation" "${SCRIPT_DIR}/verify-env.sh" --example-only
+  COMPOSE_FILE="${compose_file}" run_script "ports policy validation" "${SCRIPT_DIR}/check-internal-ports-policy.sh"
+}
+
+run_pre_deploy_adjacent_scripts() {
+  run_script "volume initialization" "${SCRIPT_DIR}/init-volumes.sh" --env-file "${ENV_FILE}"
+}
+
+wait_for_swarm_container() {
+  local service="$1"
+  local timeout="${2:-300}"
+  local elapsed=0
+  local service_name="${STACK_NAME}_${service}"
+
+  log "Waiting for Swarm container: ${service_name} (timeout=${timeout}s)"
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    if docker ps -q \
+      --filter "label=com.docker.swarm.service.name=${service_name}" \
+      --filter "status=running" \
+      | head -n 1 \
+      | grep -q .; then
+      return 0
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+
+  log "ERROR: timeout waiting for Swarm container: ${service_name}"
+  exit 1
+}
+
+run_post_deploy_scripts() {
+  local wait_timeout="${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+
+  wait_for_swarm_container db "${wait_timeout}"
+  wait_for_swarm_container koha "${wait_timeout}"
+
+  ORCHESTRATOR_MODE=swarm
+  DOCKER_RUNTIME_MODE=swarm
+  export ORCHESTRATOR_MODE DOCKER_RUNTIME_MODE STACK_NAME
+
+  run_script "live config bootstrap" "${SCRIPT_DIR}/bootstrap-live-configs.sh" --env-file "${ENV_FILE}"
+
+  wait_for_swarm_container koha "${wait_timeout}"
+
+  run_script "password prefs lockdown" "${SCRIPT_DIR}/koha-lockdown-password-prefs.sh" --env-file "${ENV_FILE}"
+}
+
 run_ansible_secrets_if_configured() {
   local infra_repo_path environment inventory_env inventory_path playbook_path
 
@@ -94,10 +162,12 @@ deploy_swarm() {
     exit 1
   fi
 
+  run_validation_scripts "${compose_file}"
+
   if [[ ! -f "${ENV_FILE}" ]]; then
     if [[ -f ".env" ]]; then
       ENV_FILE=".env"
-      log "Env file ${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted} not found; fallback to .env"
+      log "WARNING: env.*.enc не знайдено або ORCHESTRATOR_ENV_FILE не передано. Fallback на локальний .env — тільки для dev-середовища."
     else
       log "ERROR: env file not found (${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}) and .env missing"
       exit 1
@@ -105,6 +175,8 @@ deploy_swarm() {
   fi
 
   run_ansible_secrets_if_configured
+
+  run_pre_deploy_adjacent_scripts
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
@@ -116,6 +188,8 @@ deploy_swarm() {
 
   log "Deploying stack ${STACK_NAME}"
   docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
+
+  run_post_deploy_scripts
 
   log "Swarm deploy completed"
 }

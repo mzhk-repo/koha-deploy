@@ -8,7 +8,15 @@ fail() {
   exit 1
 }
 
-compose_file="${COMPOSE_FILE:-docker-compose.yaml}"
+if [[ -n "${COMPOSE_FILE:-}" ]]; then
+  compose_file="${COMPOSE_FILE}"
+elif [[ -f "docker-compose.yaml" ]]; then
+  compose_file="docker-compose.yaml"
+elif [[ -f "docker-compose.yml" ]]; then
+  compose_file="docker-compose.yml"
+else
+  compose_file="docker-compose.yaml"
+fi
 [ -f "${compose_file}" ] || fail "Compose file not found: ${compose_file}"
 
 # Services that are allowed to publish ports externally.

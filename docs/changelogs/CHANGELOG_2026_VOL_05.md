@@ -1,300 +1,6 @@
-# CHANGELOG Volume 04 (2026)
 
-Анотація:
-- Контекст: новий активний том після досягнення hard limit у `CHANGELOG_2026_VOL_03.md`.
-- Зміст: продовження робіт по CI/CD, CD-deploy та операційній стабілізації прод-оточення.
-
----
-
-## 2026-03-03
-
-### 1) Ротація changelog-томів (`VOL_03` -> archived, `VOL_04` -> active)
-
-- Виконано ротацію за політикою лімітів:
-  - `CHANGELOG_2026_VOL_03.md` досяг `363` рядків (вище `hard limit: 350`);
-  - створено новий активний том:
-    - [CHANGELOG_2026_VOL_04.md](/home/pinokew/Koha/koha-deploy/CHANGELOGS/CHANGELOG_2026_VOL_04.md)
-
-- Оновлено індекс томів:
-  - [CHANGELOG.md](/home/pinokew/Koha/koha-deploy/CHANGELOG.md)
-  - `VOL_04` позначено як `active`;
-  - попередній `VOL_03` переведено у статус `archived`.
-
-### 2) Спрощення `.github/workflows/ci-cd-checks.yml` (fast core checks)
-
-- Мета:
-  - скоротити тривалість CI та зменшити складність workflow;
-  - залишити тільки базові критичні перевірки + CD-деплой.
-
-- Оновлено:
-  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
-
-- Зміни:
-  - workflow скорочено з ~`438` до `178` рядків;
-  - прибрано важкий job `build-and-publish` (buildx/trivy image scan/sbom/push);
-  - `ci-checks` залишено у fast-core наборі:
-    - `hadolint`
-    - `shellcheck`
-    - `docker compose config -q` (`.env.example`)
-    - `verify-env --example-only`
-    - `check-secrets-hygiene.sh`
-    - `check-internal-ports-policy.sh`
-    - `gitleaks`
-  - `cd-deploy` збережено, але тепер залежить тільки від `ci-checks`;
-  - deploy-поведінка лишилась стабільною:
-    - pull для registry-сервісів;
-    - build для локальних `koha-local-*` сервісів;
-    - `up -d --remove-orphans` + bootstrap + health-check.
-
-- Перевірено:
-  - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
-
-### 3) Повернено `Trivy Config Scan` у fast-core CI
-
-- За результатами ревізії спрощеного workflow повернуто базовий security gate:
-  - `Trivy config` (тільки config scan, без image scan).
-
-- Оновлено:
-  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
-  - додано:
-    - env `TRIVY_IMAGE` (pinned digest);
-    - крок `Trivy config scan` у `ci-checks`:
-      - `trivy config --skip-check-update --exit-code 1 --severity HIGH,CRITICAL /work`
-
-- Перевірено:
-  - `actionlint .github/workflows/ci-cd-checks.yml` (через `rhysd/actionlint:1.7.8`) — OK.
-
-### 4) Документація: перетворено `README.md` на комплексний операційний гайд
-
-- **Мета:** створити всеобхідний, деталізований `README.md` за аналогією з `README.example.md`, адаптований під поточний Koha production-стек.
-
-- **Обновлено:**
-  - [README.md](/home/pinokew/Koha/koha-deploy/README.md) — повний переписаний документ
-
-- **Структура нового README:**
-  1. **Status section** — поточний статус, активні ініціативи, що закрито, відомі обмеження
-  2. **About the project** — назначення, аудиторія, ключові можливості, скоп
-  3. **Architecture stack** — таблиця технологій (Koha 24.x, MariaDB 11, ES 8.19.6, RabbitMQ 3, Memcached 1.6)
-  4. **Repository topology** — детальна структура файлів та директорій (scripts/, patch/, systemd/, Dockerfiles, CI/CD)
-  5. **System topology** — docker-compose arquitetura (сервіси, порти, health-checks, resource limits в таблицях)
-  6. **Configuration model** — SSOT (.env, .env.example, compose), live-конфіг патчі, категорії змінних
-  7. **Security** — security-first принципи (least privilege, no secrets in git, network isolation, Cloudflare Tunnel, container hardening)
-  8. **Local environments** — передумови, підготовка, критичні змінні для local dev
-  9. **Quick start** — step-by-step: стартувати сервіси, перевірити статус, застосувати конфіги, доступ з браузера
-  10. **Operational procedures** — SMTP setup, backup/restore з прикладами, логування, автоматичний збір через systemd
-  11. **Production deployment** — manual deploy procedure + GitHub Actions CI/CD workflow
-  12. **CI/CD Architecture** — workflow stages, security gates, branch protection, artifact pinning
-  13. **Monitoring & Alerts** — вбудовані health-checks (таблиця), рекомендовані метрики/SLO, централізований лог-збір
-  14. **Troubleshooting** — типові проблеми (Koha не стартує, DB connection errors, ES issues, Tunnel connectivity, disk space)
-  15. **References** — для нової сесії (AGENTS.md, ROADMAP_PROD.md, ARCHITECTURE.md), операцій (RUNBOOK_DR.md), зовнішні links
-
-- **Перевірено:**
-  - Усі посилання на файли перевірені і відповідають реальній структурі
-  - Команди (docker compose, scripts/) актуальні
-  - SMTP, backup/restore, CI/CD приклади відповідають факту
-  - Status таблиця синхронізована з ROADMAP_PROD.md і CHANGELOG_2026_VOL_04.md
-  - Структура i formatting (markdown, таблиці, code blocks) перевірена
-
-- **Результат:**
-  - README.md тепер готовий як **вичерпна операційна документація** для:
-    - нових девелоперів (quick start guide);
-    - операційної команди (procedures, monitoring, troubleshooting);
-    - архітекторів (architecture, security, design decisions);
-    - інтеграторів (API, integrations, customization points).
-
----
-
-## 2026-03-11
-
-### 5) Додано `paths-ignore` фільтр у CI/CD workflow для пропуску документації
-
-- **Мета:** зменшити bezvýrod CI-виконань при оновленні документації та конфіг-шаблонів, які не впливають на runtime-стек.
-
-- **Оновлено:**
-  - [.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
-
-- **Зміни:**
-  - додано `paths-ignore` фільтр до обох `pull_request` та `push` тригерів:
-    ```yaml
-    paths-ignore:
-      - '**.md'              # Усі markdown файли (README.md, ROADMAP_PROD.md, ARCHITECTURE.md, CHANGELOG*, etc.)
-      - '.env.example'       # Конфіг-шаблон (не впливає на runtime)
-      - '.gitignore'         # Git-конфіг
-      - 'archive/**'         # Архівовані файли
-    ```
-
-- **Поведінка:**
-  - При push/PR з **тільки** текстовими змінами (всі файли в `paths-ignore`) → workflow **пропускається** (не запускаються jobs)
-  - При push/PR зі змінами в **code/config** (scripts/, docker-compose.yaml, Dockerfiles, etc.) → workflow executes нормально
-  - `workflow_dispatch` завжди запускається (manual trigger)
-
-- **Перевірено:**
-  - YAML syntax перевірена (valid GitHub Actions workflow)
-  - Фільтри протестовані з `**.md` pattern (рекурсивно всі .md)
-  - Логіка: якщо commit містить **хоча б одну** змінену файл НЕ в `paths-ignore`, то workflow запуститься
-
----
 
 ## 2026-03-13
-
-### 6) Ітеративна міграція edge-доступу: `Cloudflare tunnel (koha-deploy)` -> `Traefik gateway`
-
-- **Контекст / ціль:**
-  - перейти з локального `tunnel` сервісу в `koha-deploy` на схему `Cloudflare Tunnel (external) -> Traefik -> Koha`;
-  - підключити Traefik до `koha-deploy_kohanet`;
-  - перевести домени OPAC/Staff у config-as-code;
-  - закрити ризик втрати реального client IP у ланцюжку з двома проксі.
-
-#### Ітерація 1: Traefik <-> Koha network gateway
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/docker-compose.yaml](/home/pinokew/Koha/koha-deploy/docker-compose.yaml)
-  - [/home/pinokew/Traefik/docker-compose.yml](/home/pinokew/Traefik/docker-compose.yml)
-
-- Зміни:
-  - для `kohanet` зафіксовано стабільне ім'я: `koha-deploy_kohanet`;
-  - `traefik` підключено до зовнішньої мережі `koha-deploy_kohanet` (як gateway);
-  - на сервісі `koha` додано Traefik labels для двох host-based роутерів:
-    - OPAC: `library.pinokew.buzz`
-    - Staff: `koha.pinokew.buzz`
-  - backend порти в labels переведено на env-driven значення:
-    - `${KOHA_OPAC_PORT}` / `${KOHA_INTRANET_PORT}`.
-
-- Перевірено:
-  - `docker compose config` для обох стеків — OK;
-  - `docker inspect traefik` -> мережі: `proxy-net`, `koha-deploy_kohanet`;
-  - після виходу `koha` у `healthy` обидва host-и повертають `HTTP/1.1 200 OK` через Traefik.
-
-#### Ітерація 2: видалення локального tunnel сервісу з koha-deploy
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/docker-compose.yaml](/home/pinokew/Koha/koha-deploy/docker-compose.yaml)
-
-- Зміни:
-  - видалено сервіс `tunnel` (cloudflared) зі стеку `koha-deploy`;
-  - external access policy в compose-коментарях оновлено під edge gateway модель.
-
-- Перевірено:
-  - `docker compose up -d --remove-orphans` видалив `koha-deploy-tunnel-1`;
-  - core services (`db/es/rabbitmq/memcached/koha`) залишились у робочому стані;
-  - `koha` після перезапуску -> `healthy`.
-
-#### Ітерація 3: домени як code (без ручних правок через UI)
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
-  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
-  - [/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh](/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh)
-  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-domain.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-domain.sh)
-
-- Зміни:
-  - встановлено цільові домени в env SSOT:
-    - `KOHA_OPAC_SERVERNAME=library.pinokew.buzz`
-    - `KOHA_INTRANET_SERVERNAME=koha.pinokew.buzz`
-    - `TRAEFIK_OPAC_HOST=library.pinokew.buzz`
-    - `TRAEFIK_STAFF_HOST=koha.pinokew.buzz`
-    - `KOHA_DOMAIN=pinokew.buzz`
-  - додано bootstrap-модуль `domain-prefs`, який оновлює `systempreferences`:
-    - `OPACBaseURL`
-    - `staffClientBaseURL`.
-  - усунуто дефект оркестратора: restart `koha` тепер виконується з абсолютними шляхами (`-f docker-compose.yaml --env-file ...`), незалежно від cwd.
-
-- Перевірено (data/services):
-  - `bash scripts/verify-env.sh` — OK;
-  - `bootstrap-live-configs --modules domain-prefs` — OK;
-  - БД `systempreferences`:
-    - `OPACBaseURL=https://library.pinokew.buzz/`
-    - `staffClientBaseURL=https://koha.pinokew.buzz/`.
-
-#### Ітерація 4: real client IP за ланцюжком Cloudflare -> Traefik -> Apache
-
-- Проблема підтверджена:
-  - до фікса Apache access log фіксував IP Traefik (`172.19.x.x`) замість клієнтського.
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/apache/remoteip.conf](/home/pinokew/Koha/koha-deploy/apache/remoteip.conf)
-  - [/home/pinokew/Koha/koha-deploy/docker-compose.yaml](/home/pinokew/Koha/koha-deploy/docker-compose.yaml)
-  - [/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh](/home/pinokew/Koha/koha-deploy/scripts/bootstrap-live-configs.sh)
-  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-conf-xml-trusted-proxies.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-conf-xml-trusted-proxies.sh)
-  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-conf-xml-verify.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-conf-xml-verify.sh)
-  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
-  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
-
-- Зміни:
-  - додано managed Apache конфіг `remoteip.conf` (mount у `conf-enabled`);
-  - `koha` стартує через `sh -lc "a2enmod remoteip ...; exec /init"` (idempotent enable on each start);
-  - додано env-параметр `KOHA_TRUSTED_PROXIES` + модуль `trusted-proxies` для `koha-conf.xml`;
-  - verify-модуль розширено перевіркою `<koha_trusted_proxies>`.
-
-- Перевірено (health/services/data):
-  - `apache2ctl -M` -> `remoteip_module (shared)`;
-  - `koha-conf.xml` містить `<koha_trusted_proxies>...` (sync з `.env`);
-  - функціональний тест: запит через Traefik з `CF-Connecting-IP: 198.51.100.77` -> у `/var/log/koha/apache/other_vhosts_access.log` зафіксовано `198.51.100.77`;
-  - OPAC + Staff через Traefik (`Host: library.pinokew.buzz` / `Host: koha.pinokew.buzz`) -> `HTTP 200` після `koha` health=healthy.
-
-- Додаткове operational спостереження:
-  - під час швидких `koha` recreate можливе тимчасове `404` від Traefik поки backend у `health: starting`; після переходу в `healthy` роутинг відновлюється (`200`).
-
-### 7) Спрощення SSOT для доменів: прибрано дублюючі `TRAEFIK_*` змінні
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
-  - [/home/pinokew/Koha/koha-deploy/.env](/home/pinokew/Koha/koha-deploy/.env)
-  - [/home/pinokew/Koha/koha-deploy/docker-compose.yaml](/home/pinokew/Koha/koha-deploy/docker-compose.yaml)
-  - [/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-domain.sh](/home/pinokew/Koha/koha-deploy/scripts/patch/patch-koha-sysprefs-domain.sh)
-
-- Зміни:
-  - видалено:
-    - `TRAEFIK_OPAC_HOST`
-    - `TRAEFIK_STAFF_HOST`
-  - Traefik labels тепер читають напряму:
-    - `KOHA_OPAC_SERVERNAME`
-    - `KOHA_INTRANET_SERVERNAME`
-  - `patch-koha-sysprefs-domain.sh` тепер теж використовує тільки `KOHA_*_SERVERNAME` як єдине джерело істини.
-
-- Перевірено:
-  - `verify-env.sh` — OK;
-  - `docker compose config` — OK;
-  - `bootstrap-live-configs.sh --modules domain-prefs` — OK;
-  - `systempreferences` залишились коректними:
-    - `OPACBaseURL=https://library.pinokew.buzz/`
-    - `staffClientBaseURL=https://koha.pinokew.buzz/`.
-
-### 8) Документація синхронізована з фактичною Traefik-edge архітектурою
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/README.md](/home/pinokew/Koha/koha-deploy/README.md)
-  - [/home/pinokew/Koha/koha-deploy/ARCHITECTURE.md](/home/pinokew/Koha/koha-deploy/ARCHITECTURE.md)
-
-- Що синхронізовано з фактом:
-  - видалений локальний `tunnel` сервіс зі стеку `koha-deploy`;
-  - edge-модель доступу: `external Cloudflare Tunnel -> Traefik -> Koha`;
-  - gateway-підключення Traefik до `koha-deploy_kohanet`;
-  - домени як code через `KOHA_OPAC_SERVERNAME` / `KOHA_INTRANET_SERVERNAME`;
-  - додані/описані модулі `domain-prefs` та `trusted-proxies`;
-  - зафіксовано real-IP модель (`remoteip.conf`, `mod_remoteip`, `CF-Connecting-IP`).
-
-- Перевірено:
-  - документація відповідає актуальному `docker-compose.yaml` і `scripts/bootstrap-live-configs.sh`;
-  - навігаційні посилання в README узгоджені зі структурою репозиторію.
-
-### 9) Fix CD-deploy after tunnel removal: прибрано `tunnel` з GitHub Actions service lists
-
-- Контекст:
-  - після міграції на edge-модель `external Cloudflare Tunnel -> Traefik -> Koha` локальний сервіс `tunnel` видалено з `docker-compose.yaml`;
-  - CD job у `.github/workflows/ci-cd-checks.yml` все ще посилався на `tunnel`, що спричиняло падіння deploy через SSH:
-    - `no such service: tunnel`.
-
-- Оновлено:
-  - [/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml](/home/pinokew/Koha/koha-deploy/.github/workflows/ci-cd-checks.yml)
-
-- Зміни:
-  - `DEPLOY_PULL_SERVICES`: `db koha tunnel` -> `db koha`;
-  - `DEPLOY_SERVICES`: `db es rabbitmq memcached koha tunnel` -> `db es rabbitmq memcached koha`.
-
-- Перевірено:
-  - конфіг workflow узгоджений з фактичним складом сервісів у `docker-compose.yaml`;
-  - root-cause помилки `no such service: tunnel` усунуто на рівні CI/CD конфігурації.
 
 ### 10) IaC для `IntranetUserJS`: patch-модуль з env-driven змінними (без ручного UI)
 
@@ -586,3 +292,225 @@
   - `bash scripts/bootstrap-live-configs.sh --module identity-provider` — OK;
   - у БД підтверджено актуальні значення `identity_providers`/`identity_provider_domains` для `AzureID`;
   - Google sysprefs підтверджено у вимкненому/очищеному стані (`GoogleOpenIDConnect=0`, `GoogleOpenIDConnectAutoRegister=0`, `RESTOAuth2ClientCredentials=0`, решта очищені).
+
+## 2026-04-24
+
+### 21) Scripts refactoring: оновлено preflight Категорії 1а для Swarm-оркестратора
+
+- Контекст:
+  - `scripts/check-secrets-hygiene.sh` виводиться зі scope, бо перевірку секретів виконує Gitleaks у CI;
+  - репозиторій використовує `docker-compose.yml`, а частина 1а-перевірок очікувала `docker-compose.yaml`.
+
+- Оновлено:
+  - `scripts/check-ports-policy.sh`
+  - `scripts/check-internal-ports-policy.sh`
+  - `scripts/deploy-orchestrator-swarm.sh`
+
+- Зміни:
+  - прибрано виклик `check-secrets-hygiene.sh` з `check-ports-policy.sh`;
+  - додано detection `docker-compose.yaml|docker-compose.yml` для port-policy preflight;
+  - у `deploy-orchestrator-swarm.sh` додано `run_validation_scripts()` перед роботою з env-файлом і deploy-кроком;
+  - fallback-повідомлення для локального `.env` уточнено як dev-only сценарій.
+
+- Перевірено:
+  - `bash -n scripts/check-ports-policy.sh scripts/check-internal-ports-policy.sh scripts/deploy-orchestrator-swarm.sh` — OK;
+  - `bash scripts/check-ports-policy.sh` — OK;
+  - `COMPOSE_FILE=docker-compose.yml bash scripts/verify-env.sh --example-only` — OK;
+  - `bash scripts/check-internal-ports-policy.sh` — OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` — OK.
+
+### 22) Scripts refactoring: єдиний безпечний env-flow для Категорії 1б
+
+- Контекст:
+  - deploy-adjacent скрипти мають отримувати env з `ORCHESTRATOR_ENV_FILE` після CI/SOPS-розшифровки;
+  - для локального dev збережено fallback на `.env`;
+  - `source`/eval для env-файлів у 1б заборонено.
+
+- Оновлено:
+  - `scripts/lib/orchestrator-env.sh`
+  - `scripts/init-volumes.sh`
+  - `scripts/bootstrap-live-configs.sh`
+  - `scripts/koha-lockdown-password-prefs.sh`
+  - `scripts/patch/_patch_common.sh`
+  - `scripts/patch/patch-koha-sysprefs-domain.sh`
+  - `scripts/patch/patch-koha-sysprefs-oidc.sh`
+  - `scripts/patch/patch-koha-sysprefs-opac-matomo.sh`
+  - `scripts/patch/patch-koha-identity-provider.sh`
+  - `scripts/deploy-orchestrator-swarm.sh`
+
+- Зміни:
+  - додано спільний helper `orchestrator-env.sh`, який резолвить `--env-file` / `ORCHESTRATOR_ENV_FILE` / dev fallback `.env`;
+  - env-файли читаються без `source`/eval, через безпечний dotenv-parser;
+  - `init-volumes.sh`, `bootstrap-live-configs.sh`, `koha-lockdown-password-prefs.sh` приймають `--env-file`;
+  - patch-модулі отримали спільний compose-file detection через `KOHA_COMPOSE_FILE`;
+  - у Swarm-оркестратор підключено pre-deploy `init-volumes.sh` з `--env-file "${ENV_FILE}"`.
+
+- Примітка:
+  - `bootstrap-live-configs.sh` і `koha-lockdown-password-prefs.sh` env-сумісні з оркестратором, але не запускаються автоматично зі Swarm path на цьому кроці, бо частина модулів ще використовує `docker compose exec` і потребує окремого Swarm-native адаптера.
+
+- Перевірено:
+  - `bash -n` для змінених 1б shell-скриптів — OK;
+  - `bash scripts/bootstrap-live-configs.sh --list-modules` — OK;
+  - `bash scripts/patch/patch-koha-apache-csp-report-only.sh --env-file .env.example --dry-run` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --env-file .env.example --module csp-report-only --dry-run` — OK;
+  - `bash scripts/koha-lockdown-password-prefs.sh --env-file .env.example --help` — OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` — OK;
+  - `git diff --check` — OK.
+
+### 23) Scripts refactoring: Swarm-native runtime adapter для patch/lockdown exec-команд
+
+- Контекст:
+  - частина 1б-скриптів виконувала DB/Koha команди через `docker compose exec`;
+  - для Swarm path потрібен адаптер, який виконує команди у running task container за service label.
+
+- Оновлено:
+  - `scripts/lib/docker-runtime.sh`
+  - `scripts/patch/_patch_common.sh`
+  - `scripts/patch/patch-koha-sysprefs-domain.sh`
+  - `scripts/patch/patch-koha-sysprefs-oidc.sh`
+  - `scripts/patch/patch-koha-sysprefs-opac-matomo.sh`
+  - `scripts/patch/patch-koha-identity-provider.sh`
+  - `scripts/koha-lockdown-password-prefs.sh`
+
+- Зміни:
+  - додано `docker_runtime_exec SERVICE ...` з режимами `compose|swarm`;
+  - default runtime: `ORCHESTRATOR_MODE=swarm` -> Swarm, інакше Compose;
+  - Swarm mode шукає контейнер за label `com.docker.swarm.service.name=${STACK_NAME}_${service}`;
+  - якщо Swarm container не знайдено, виконується fallback на `docker compose exec`;
+  - якщо контейнер знайдено, помилка команди не маскується fallback-ом.
+
+- Перевірено:
+  - `bash -n` для runtime helper, patch-модулів і lockdown-скрипта — OK;
+  - `bash scripts/patch/patch-koha-apache-csp-report-only.sh --env-file .env.example --dry-run` — OK;
+  - `bash scripts/patch/patch-koha-sysprefs-domain.sh --env-file .env.example --dry-run` — OK;
+  - `bash scripts/patch/patch-koha-sysprefs-opac-matomo.sh --env-file .env.example --dry-run` — OK;
+  - `bash scripts/patch/patch-koha-sysprefs-oidc.sh --env-file .env.example --apply --dry-run` — OK;
+  - `bash scripts/koha-lockdown-password-prefs.sh --env-file .env.example --help` — OK;
+  - runtime mode resolver (`compose`, `swarm`, `ORCHESTRATOR_MODE=swarm`) — OK;
+  - `git diff --check` — OK.
+
+### 24) Scripts refactoring: підключено post-deploy bootstrap/lockdown у Swarm-оркестратор
+
+- Контекст:
+  - після появи `docker-runtime.sh` patch/lockdown скрипти можуть виконувати команди через Swarm task containers;
+  - `deploy-orchestrator-swarm.sh` має запускати post-deploy конфігураційні кроки після `docker stack deploy`.
+
+- Оновлено:
+  - `scripts/deploy-orchestrator-swarm.sh`
+  - `scripts/bootstrap-live-configs.sh`
+  - `scripts/lib/docker-runtime.sh`
+
+- Зміни:
+  - після `docker stack deploy` оркестратор чекає running containers для `${STACK_NAME}_db` і `${STACK_NAME}_koha`;
+  - далі запускає `bootstrap-live-configs.sh --env-file "${ENV_FILE}"` у `ORCHESTRATOR_MODE=swarm` / `DOCKER_RUNTIME_MODE=swarm`;
+  - після bootstrap/restart повторно чекає running `${STACK_NAME}_koha`;
+  - потім запускає `koha-lockdown-password-prefs.sh --env-file "${ENV_FILE}"`;
+  - `bootstrap-live-configs.sh` тепер рестартить `koha` через `docker_runtime_restart_service`;
+  - для Swarm restart використовується `docker service update --force ${STACK_NAME}_koha`, з Compose fallback.
+
+- Перевірено:
+  - `bash -n scripts/deploy-orchestrator-swarm.sh scripts/bootstrap-live-configs.sh scripts/lib/docker-runtime.sh scripts/koha-lockdown-password-prefs.sh` — OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --list-modules` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --env-file .env.example --module csp-report-only --dry-run` — OK;
+  - `bash scripts/koha-lockdown-password-prefs.sh --env-file .env.example --help` — OK;
+  - `git diff --check` — OK.
+
+### 25) Scripts refactoring: автономний SOPS env-flow для Категорії 2
+
+- Контекст:
+  - автономні скрипти запускаються поза CI/CD і не отримують `ORCHESTRATOR_ENV_FILE`;
+  - джерело середовища для cron/manual сценаріїв: CLI `--env dev|prod` або `SERVER_ENV`;
+  - розшифрований env має жити у `/dev/shm`, а не в `/tmp`.
+
+- Оновлено:
+  - `scripts/lib/autonomous-env.sh`
+  - `scripts/backup.sh`
+  - `scripts/restore.sh`
+  - `scripts/collect-docker-logs.sh`
+
+- Зміни:
+  - додано helper `autonomous-env.sh` для `env.dev.enc` / `env.prod.enc`;
+  - helper визначає середовище через перший positional `dev|prod`, `--env dev|prod`, `--env=dev|prod` або `SERVER_ENV`;
+  - env розшифровується через `sops --decrypt --input-type dotenv --output-type dotenv` у `/dev/shm/env-*`, права `600`, cleanup через `trap`;
+  - `backup.sh` і `restore.sh` мінімально змінені тільки навколо env-завантаження;
+  - `restore.sh` і `collect-docker-logs.sh` отримали CLI `--env dev|prod`;
+  - старий `source .env` прибрано з Категорії 2.
+
+- Перевірено:
+  - `bash -n scripts/lib/autonomous-env.sh scripts/backup.sh scripts/restore.sh scripts/collect-docker-logs.sh` — OK;
+  - `bash scripts/restore.sh --help` — OK;
+  - `bash scripts/collect-docker-logs.sh --help` — OK;
+  - helper parsing/resolution для `--env prod`, `--env=dev`, positional `production`, `development`, `prod` — OK;
+  - `sops` доступний як `/usr/bin/sops`;
+  - decrypt-патерн узгоджено з `/opt/Dspace/DSpace-docker/scripts/lib/autonomous-env.sh` без явного `--age-key-file`;
+  - `git diff --check` — OK.
+
+### 26) Docs/scripts refactoring: синхронізовано autonomous decrypt-приклади з DSpace-патерном
+
+- Контекст:
+  - Koha helper Категорії 2 мав зайву прив'язку до `SOPS_AGE_KEY_FILE` / `${HOME}/.config/age/keys.txt`;
+  - у DSpace успішний патерн використовує стандартний SOPS decrypt без явного `--age-key-file`.
+
+- Оновлено:
+  - `scripts/lib/autonomous-env.sh`
+  - `docs/scrypts_refactoring.md`
+  - `docs/RUNBOOK_DR.md`
+  - `docs/changelogs/CHANGELOG_2026_VOL_05.md`
+
+- Зміни:
+  - `decrypt_autonomous_env()` тепер використовує `sops --decrypt --input-type dotenv --output-type dotenv "${enc_file}"`;
+  - temp-файл у `/dev/shm` приведено до DSpace-style `env-XXXXXX`;
+  - roadmap/refactoring examples більше не радять `--age-key-file` або `/tmp` для тимчасового env;
+  - DR runbook оновлено під `env.<env>.enc`, `SERVER_ENV=prod` і `--env prod`.
+
+- Перевірено:
+  - `bash -n scripts/lib/autonomous-env.sh` — OK;
+  - `rg 'age-key|SOPS_AGE_KEY_FILE|/tmp/env' docs/scrypts_refactoring.md scripts/lib/autonomous-env.sh` — без застарілих прикладів;
+  - `git diff --check` — OK.
+
+### 27) Scripts refactoring: end-to-end non-destructive verification
+
+- Контекст:
+  - після рефакторингу Категорій 1а/1б/2 потрібна наскрізна перевірка без destructive дій.
+
+- Перевірено:
+  - `bash -n` для всіх shell-скриптів у `scripts/` — OK;
+  - grep-перевірка: у 1б немає `source` / `. "$ENV_FILE"` для `ENV_FILE` або `ORCHESTRATOR_ENV_FILE` — OK;
+  - grep-перевірка: прямі `docker compose exec` прибрані з patch/lockdown скриптів — OK;
+  - `bash scripts/check-ports-policy.sh` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --list-modules` — OK;
+  - `bash scripts/bootstrap-live-configs.sh --env-file .env.example --module csp-report-only --dry-run` — OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` — OK;
+  - `bash scripts/restore.sh --help` — OK;
+  - `bash scripts/collect-docker-logs.sh --help` — OK;
+  - `bash scripts/koha-lockdown-password-prefs.sh --env-file .env.example --help` — OK;
+  - helper parsing/resolution для `--env prod`, `--env=dev`, positional `production`, `development`, `prod` — OK;
+  - manual SOPS smoke: `sops --decrypt --input-type dotenv --output-type dotenv env.dev.enc > /dev/shm/env-*` + `ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module csp-report-only --dry-run` — OK;
+  - tmp env cleanup через `shred -u ... || rm -f ...` — OK.
+
+- Примітка:
+  - `backup.sh`, `restore.sh`, `collect-docker-logs.sh` не запускались у runtime-режимі, бо вони можуть взаємодіяти з Docker/backup/restore state; перевірено тільки синтаксис, help і env helper parsing.
+
+### 28) Docs: `scripts_runbook.md` приведено до Koha-specific стану
+
+- Контекст:
+  - `docs/scripts_runbook.md` містив залишки DSpace runbook після перенесення refactoring patterns у Koha deploy repo;
+  - документація має відображати фактичні Koha scripts contracts після рефакторингу Категорій 1а/1б/2.
+
+- Оновлено:
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - прибрано DSpace-specific секції та приклади (`backup-dspace`, `restore-backup`, maintenance/user-groups/runtime start);
+  - додано Koha-specific опис validation, Swarm orchestrator, `init-volumes.sh`, `bootstrap-live-configs.sh`, lockdown і patch modules;
+  - додано runtime helpers `orchestrator-env.sh`, `docker-runtime.sh`, `autonomous-env.sh`;
+  - описано autonomous scripts `backup.sh`, `restore.sh`, `collect-docker-logs.sh`;
+  - додано non-destructive verification checklist і manual SOPS smoke через `/dev/shm/env-XXXXXX`;
+  - для `install-collect-logs-timer.sh` зафіксовано потребу синхронізувати systemd unit з autonomous env contract перед production install.
+
+- Перевірено:
+  - grep-перевірка на DSpace/legacy terms у `docs/scripts_runbook.md` — без збігів;
+  - `git diff --check` — OK;
+  - `git diff --no-index --check /dev/null docs/scripts_runbook.md` — OK;
+  - `git diff --no-index --check /dev/null docs/changelogs/CHANGELOG_2026_VOL_05.md` — OK.

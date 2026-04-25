@@ -12,47 +12,46 @@
 # Використання:
 #   ./scripts/init-volumes.sh
 #   ./scripts/init-volumes.sh --fix-existing  # рекурсивно вирівняти права у вже існуючих даних
+#   ORCHESTRATOR_ENV_FILE=/tmp/env.decrypted ./scripts/init-volumes.sh
 
 set -euo pipefail
 
 FIX_EXISTING=false
-case "${1:-}" in
-  "")
-    ;;
-  --fix-existing)
-    FIX_EXISTING=true
-    ;;
-  *)
-    echo "Usage: $0 [--fix-existing]" >&2
-    exit 1
-    ;;
-esac
-
-# --- 1) Load .env (robust) ---
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-ENV_FILE="$SCRIPT_DIR/../.env"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${ENV_FILE:-}"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "❌ Error: .env file not found at: $ENV_FILE" >&2
-  exit 1
-fi
+usage() {
+  echo "Usage: $0 [--fix-existing] [--env-file FILE]" >&2
+}
 
-echo "🌍 Loading environment variables from .env..."
-while IFS='=' read -r key value; do
-  [[ "$key" =~ ^\s*# ]] && continue
-  [[ -z "${key//[[:space:]]/}" ]] && continue
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fix-existing)
+      FIX_EXISTING=true
+      ;;
+    --env-file)
+      shift
+      [[ $# -gt 0 ]] || { usage; exit 1; }
+      ENV_FILE="$1"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
 
-  # trim ключ
-  key=$(echo "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-
-  # значення: trim + strip quotes
-  value=$(echo "${value:-}" | sed \
-    -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
-    -e 's/^"//' -e 's/"$//' \
-    -e "s/^'//" -e "s/'$//")
-
-  export "$key=$value"
-done < <(grep -vE '^\s*#' "$ENV_FILE" | grep -vE '^\s*$')
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/orchestrator-env.sh"
+ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+echo "🌍 Loading environment variables from ${ENV_FILE}..."
+load_orchestrator_env_file "${ENV_FILE}"
 
 # --- 2) Validate required paths (SSOT) ---
 : "${VOL_DB_PATH:?VOL_DB_PATH is required in .env}"

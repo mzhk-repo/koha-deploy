@@ -159,8 +159,7 @@ load_required_env() {
 
 db_query() {
   local sql="$1"
-  docker compose --env-file "${ENV_FILE}" -f "${PROJECT_ROOT}/docker-compose.yaml" exec -T \
-    db mariadb -N -B -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
+  docker_runtime_exec db mariadb -N -B -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
 }
 
 normalize_fk_value_for_identity_provider_domain() {

@@ -6,7 +6,7 @@ umask 027
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENVIRONMENT_ARG=""
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
@@ -20,11 +20,10 @@ is_true() {
 }
 
 load_env() {
-  [ -f "${ENV_FILE}" ] || die ".env not found: ${ENV_FILE}"
-  set -a
-  # shellcheck disable=SC1090
-  . "${ENV_FILE}"
-  set +a
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
+  load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
 }
 
 require_vars() {
@@ -215,7 +214,7 @@ apply_retention() {
 }
 
 main() {
-  load_env
+  load_env "$@"
   require_vars
 
   BACKUP_ROOT="${BACKUP_PATH:-${PROJECT_ROOT}/backups}"

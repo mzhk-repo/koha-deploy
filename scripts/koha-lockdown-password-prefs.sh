@@ -5,17 +5,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENV_FILE="${ENV_FILE:-}"
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 die() { printf '[%s] ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; exit 1; }
 
 load_env() {
-  [ -f "${ENV_FILE}" ] || die ".env not found: ${ENV_FILE}"
-  set -a
-  # shellcheck disable=SC1090
-  . "${ENV_FILE}"
-  set +a
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/orchestrator-env.sh"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/docker-runtime.sh"
+  ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+  KOHA_COMPOSE_FILE="$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")"
+  DOCKER_RUNTIME_COMPOSE_FILE="${KOHA_COMPOSE_FILE}"
+  DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
+  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+  load_orchestrator_env_file "${ENV_FILE}"
   [ -n "${KOHA_INSTANCE:-}" ] || die "KOHA_INSTANCE is required"
 }
 
@@ -26,6 +31,8 @@ Usage: ./scripts/koha-lockdown-password-prefs.sh [--apply] [--verify]
 Options:
   --apply    Set OpacResetPassword=0 and OpacPasswordChange=0
   --verify   Verify both preferences are set to 0
+  --env-file FILE
+             Path to env file (default: ORCHESTRATOR_ENV_FILE, fallback ./.env for dev)
   --help     Show help
 
 Default behavior: --apply and --verify
@@ -34,7 +41,7 @@ USAGE
 
 apply_changes() {
   log "Applying OIDC lockdown prefs for instance '${KOHA_INSTANCE}'..."
-  docker compose exec -T koha sh -lc "
+  docker_runtime_exec koha sh -lc "
     koha-mysql '${KOHA_INSTANCE}' -e \"
       UPDATE systempreferences
       SET value='0'
@@ -48,7 +55,7 @@ verify_changes() {
 
   local output
   output="$(
-    docker compose exec -T koha sh -lc "
+    docker_runtime_exec koha sh -lc "
       koha-mysql '${KOHA_INSTANCE}' -N -e \"
         SELECT variable, value
         FROM systempreferences
@@ -88,6 +95,11 @@ main() {
           flags_seen=true
         fi
         do_verify=true
+        ;;
+      --env-file)
+        shift
+        [ "$#" -gt 0 ] || die "--env-file requires value"
+        ENV_FILE="$1"
         ;;
       --help|-h) usage; exit 0 ;;
       *) die "Unknown option: $1 (use --help)" ;;
