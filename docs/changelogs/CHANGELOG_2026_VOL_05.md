@@ -514,3 +514,29 @@
   - `git diff --check` — OK;
   - `git diff --no-index --check /dev/null docs/scripts_runbook.md` — OK;
   - `git diff --no-index --check /dev/null docs/changelogs/CHANGELOG_2026_VOL_05.md` — OK.
+
+### 29) Category 2 autonomous scripts switched to Swarm runtime
+
+- Контекст:
+  - автономні scripts (`backup.sh`, `restore.sh`, `collect-docker-logs.sh`) мають працювати у production Swarm runtime за тим самим контрактом, що й Matomo/DSpace;
+  - попередній default для cron/manual запуску лишався compose-oriented.
+
+- Оновлено:
+  - `scripts/lib/autonomous-env.sh`
+  - `scripts/lib/docker-runtime.sh`
+  - `scripts/backup.sh`
+  - `scripts/restore.sh`
+  - `scripts/collect-docker-logs.sh`
+
+- Зміни:
+  - `autonomous-env.sh` переведено з прямого `source` decrypted dotenv на безпечний parser, щоб значення на кшталт IPv6/CIDR не виконувались як shell-код;
+  - для Category 2 скриптів default runtime встановлено як `DOCKER_RUNTIME_MODE=swarm`, compose fallback лишився для local dev;
+  - `backup.sh` виконує MariaDB dump/PITR metadata через `docker_runtime_exec db`; додано `--dry-run` без створення backup;
+  - `restore.sh` виконує DB import, PITR, verify, service scale/reindex через runtime helper;
+  - `collect-docker-logs.sh` збирає logs через `docker service logs` у Swarm mode.
+
+- Перевірено:
+  - `bash -n` і `shellcheck` для змінених Koha scripts/helper-ів — OK;
+  - `backup.sh --env dev --dry-run` — OK;
+  - `restore.sh --env dev --source <tmp-test-backup-set> --dry-run` — OK;
+  - `collect-docker-logs.sh --env dev --since 1m --dry-run` завершився без запису state/output; Docker daemon повернув warnings для частини service logs через unavailable node/incomplete log stream.

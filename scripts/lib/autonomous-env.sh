@@ -87,8 +87,28 @@ load_autonomous_env() {
   decrypt_autonomous_env "${enc_file}"
 
   autonomous_env_log "Loading env.${AUTONOMOUS_ENVIRONMENT}.enc from /dev/shm"
-  set -a
-  # shellcheck disable=SC1090
-  . "${AUTONOMOUS_ENV_TMP}"
-  set +a
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    line="$(printf '%s' "${line}" | sed -E 's/^[[:space:]]*export[[:space:]]+//')"
+    [[ "${line}" == *"="* ]] || continue
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+
+    key="$(printf '%s' "${key}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+    value="$(printf '%s' "${value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ "${value}" =~ ^\".*\"$ ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" =~ ^\'.*\'$ ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+
+    printf -v "${key}" '%s' "${value}"
+    export "${key?}"
+  done < "${AUTONOMOUS_ENV_TMP}"
 }

@@ -22,8 +22,12 @@ is_true() {
 load_env() {
   # shellcheck disable=SC1091
   . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/docker-runtime.sh"
   ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
   load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
+  DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
 }
 
 usage() {
@@ -51,10 +55,12 @@ wait_service_healthy() {
   local elapsed=0
   local cid status
 
-  cid="$(docker compose ps -q "${service}")"
-  [ -n "${cid}" ] || die "Service not found in compose: ${service}"
-
   while [ "${elapsed}" -lt "${timeout}" ]; do
+    cid="$(docker_runtime_swarm_container_id "${service}")"
+    if [[ -z "${cid}" && "$(docker_runtime_mode)" == "compose" ]]; then
+      cid="$(docker compose -f "${KOHA_COMPOSE_FILE}" ps -q "${service}")"
+    fi
+    [ -n "${cid}" ] || { sleep 3; elapsed=$((elapsed + 3)); continue; }
     status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
     case "${status}" in
       healthy|running)
@@ -62,7 +68,7 @@ wait_service_healthy() {
         return 0
         ;;
       unhealthy|exited|dead)
-        docker compose logs --tail=120 "${service}" || true
+        docker_runtime_logs "${service}" --tail=120 || true
         die "Service unhealthy: ${service} (${status})"
         ;;
     esac
@@ -70,7 +76,7 @@ wait_service_healthy() {
     elapsed=$((elapsed + 3))
   done
 
-  docker compose logs --tail=120 "${service}" || true
+  docker_runtime_logs "${service}" --tail=120 || true
   die "Timeout waiting for ${service} healthy (${timeout}s)"
 }
 
@@ -183,16 +189,19 @@ normalize_koha_conf_memcached() {
 
 import_sql_dump() {
   log "Import SQL dump: ${SQL_DUMP_FILE}"
-  docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+  # shellcheck disable=SC2016
+  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
     mariadb -uroot -p"${DB_ROOT_PASS}" -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
   '
 
   if [[ "${SQL_DUMP_FILE}" == *.gz ]]; then
-    gzip -dc "${SQL_DUMP_FILE}" | docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+    # shellcheck disable=SC2016
+    gzip -dc "${SQL_DUMP_FILE}" | docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
       mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
     '
   else
-    docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+    # shellcheck disable=SC2016
+    docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
       mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
     ' < "${SQL_DUMP_FILE}"
   fi
@@ -219,21 +228,18 @@ apply_pitr() {
     start_pos="${PITR_START_POS:-}"
   fi
 
-  local db_cid
-  db_cid="$(docker compose ps -q db)"
-  [ -n "${db_cid}" ] || die "Cannot resolve db container id for PITR"
+  docker_runtime_exec db sh -ec 'rm -rf /tmp/koha-pitr-binlogs && mkdir -p /tmp/koha-pitr-binlogs'
+  docker_runtime_cp_to_service db "${pitr_tmp}/." "/tmp/koha-pitr-binlogs/"
 
-  docker compose exec -T db sh -ec 'rm -rf /tmp/koha-pitr-binlogs && mkdir -p /tmp/koha-pitr-binlogs'
-  docker cp "${pitr_tmp}/." "${db_cid}:/tmp/koha-pitr-binlogs/"
-
-  docker compose exec -T \
-    -e DB_ROOT_PASS="${DB_ROOT_PASS}" \
-    -e DB_NAME="${DB_NAME}" \
-    -e DB_LOG_BIN_BASENAME="${DB_LOG_BIN_BASENAME:-mysql-bin}" \
-    -e PITR_TARGET_DATETIME="${PITR_TARGET_DATETIME}" \
-    -e PITR_START_FILE="${start_file}" \
-    -e PITR_START_POS="${start_pos}" \
-    db sh -ec '
+  # shellcheck disable=SC2016
+  docker_runtime_exec db env \
+    DB_ROOT_PASS="${DB_ROOT_PASS}" \
+    DB_NAME="${DB_NAME}" \
+    DB_LOG_BIN_BASENAME="${DB_LOG_BIN_BASENAME:-mysql-bin}" \
+    PITR_TARGET_DATETIME="${PITR_TARGET_DATETIME}" \
+    PITR_START_FILE="${start_file}" \
+    PITR_START_POS="${start_pos}" \
+    sh -ec '
       set -eu
       command -v mariadb-binlog >/dev/null 2>&1 || { echo "mariadb-binlog not found" >&2; exit 1; }
 
@@ -266,7 +272,7 @@ EOF
       eval "${cmd} ${selected}" | mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
     '
 
-  docker compose exec -T db sh -ec 'rm -rf /tmp/koha-pitr-binlogs'
+  docker_runtime_exec db sh -ec 'rm -rf /tmp/koha-pitr-binlogs'
   rm -rf "${pitr_tmp}"
   trap - RETURN
 
@@ -277,12 +283,13 @@ verify_restore() {
   local biblio_count="0"
   local es_count="0"
 
-  biblio_count="$(docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+  # shellcheck disable=SC2016
+  biblio_count="$(docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
     mariadb -uroot -p"${DB_ROOT_PASS}" -N -e "SELECT COUNT(*) FROM ${DB_NAME}.biblio;"
   ' | tr -d '\r' | tail -n1)"
 
   if is_true "${USE_ELASTICSEARCH:-true}"; then
-    es_count="$(docker compose exec -T es sh -ec '
+    es_count="$(docker_runtime_exec es sh -ec '
       curl -fsS http://localhost:9200/koha_library_biblios/_count 2>/dev/null | sed -n "s/.*\"count\":\([0-9]*\).*/\1/p"
     ' | tail -n1 || true)"
   fi
@@ -367,7 +374,9 @@ main() {
   fi
 
   log "[1/9] Stop stack"
-  docker compose down --remove-orphans
+  for service in koha es rabbitmq memcached db; do
+    docker_runtime_scale_service "${service}" 0 || true
+  done
 
   log "[2/9] Restore config/data archives"
   restore_archive_to_path "${RESTORE_SOURCE_DIR}/koha_config.tar.gz" "${VOL_KOHA_CONF}" "${KOHA_CONF_UID}" "${KOHA_CONF_GID}"
@@ -392,7 +401,7 @@ main() {
   fi
 
   log "[5/9] Start DB"
-  docker compose up -d db
+  docker_runtime_scale_service db 1
   wait_service_healthy db 240
 
   log "[6/9] Import SQL"
@@ -406,18 +415,20 @@ main() {
   fi
 
   log "[8/9] Start infra + koha"
-  docker compose up -d es rabbitmq memcached
+  docker_runtime_scale_service es 1
+  docker_runtime_scale_service rabbitmq 1
+  docker_runtime_scale_service memcached 1
   wait_service_healthy es 300
   wait_service_healthy rabbitmq 240
 
-  docker compose up -d koha
+  docker_runtime_scale_service koha 1
   wait_service_healthy koha 360
 
   normalize_koha_conf_memcached
 
   log "[9/9] Reindex + verify"
   if is_true "${RESTORE_REINDEX}" && is_true "${USE_ELASTICSEARCH:-true}"; then
-    docker compose exec -T koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}"
+    docker_runtime_exec koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}"
   fi
 
   if is_true "${RESTORE_VERIFY}"; then

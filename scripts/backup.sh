@@ -19,11 +19,25 @@ is_true() {
   esac
 }
 
+has_arg() {
+  local needle="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    [[ "${arg}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
 load_env() {
   # shellcheck disable=SC1091
   . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/docker-runtime.sh"
   ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
   load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
+  DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
 }
 
 require_vars() {
@@ -79,7 +93,8 @@ archive_bind_path() {
 }
 
 collect_master_status() {
-  docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" db sh -ec '
+  # shellcheck disable=SC2016
+  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" sh -ec '
     mariadb -uroot -p"${DB_ROOT_PASS}" -N -e "SHOW MASTER STATUS\\G"
   ' >"${WORK_DIR}/pitr_master_status.txt" || true
 
@@ -92,7 +107,8 @@ collect_master_status() {
     echo "PITR_START_POS=${pos}"
   } >"${WORK_DIR}/pitr_master_status.env"
 
-  docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" db sh -ec '
+  # shellcheck disable=SC2016
+  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" sh -ec '
     mariadb -uroot -p"${DB_ROOT_PASS}" -N -e "SHOW VARIABLES LIKE \"log_bin\"; SHOW VARIABLES LIKE \"log_bin_basename\"; SHOW VARIABLES LIKE \"log_bin_index\"; SHOW VARIABLES LIKE \"binlog_format\"; SHOW VARIABLES LIKE \"server_id\";"
   ' >"${WORK_DIR}/mariadb_binlog_variables.txt" || true
 }
@@ -225,6 +241,16 @@ main() {
   BACKUP_INCLUDE_ES_DATA="${BACKUP_INCLUDE_ES_DATA:-false}"
   BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 
+  if has_arg "--dry-run" "$@"; then
+    log "DRY-RUN OK"
+    log "Runtime: $(docker_runtime_mode), stack=${STACK_NAME:-koha}"
+    log "Would dump DB '${DB_NAME}' from service db"
+    log "Would archive: ${VOL_KOHA_CONF}, ${VOL_KOHA_DATA}, logs=${BACKUP_INCLUDE_LOGS}, es=${BACKUP_INCLUDE_ES_DATA}"
+    log "Would write backup under: ${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
+    log "Would apply retention: ${BACKUP_RETENTION_DAYS} days"
+    exit 0
+  fi
+
   TS="$(date -u +'%Y-%m-%d_%H-%M-%S')"
   FINAL_DIR="${BACKUP_ROOT}/${TS}"
   WORK_DIR="$(mktemp -d "${BACKUP_TMP_ROOT%/}/koha-backup-${TS}-XXXXXX")"
@@ -237,7 +263,8 @@ main() {
   log "Backup destination: ${FINAL_DIR}"
 
   log "[1/7] Dump MariaDB (${DB_NAME})"
-  docker compose exec -T -e DB_ROOT_PASS="${DB_ROOT_PASS}" -e DB_NAME="${DB_NAME}" db sh -ec '
+  # shellcheck disable=SC2016
+  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
     if command -v mariadb-dump >/dev/null 2>&1; then
       DUMP_BIN=mariadb-dump
     else

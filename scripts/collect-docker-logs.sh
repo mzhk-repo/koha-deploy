@@ -15,8 +15,12 @@ die() { printf '[%s] ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; exit 
 load_env() {
   # shellcheck disable=SC1091
   . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/docker-runtime.sh"
   ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
   load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
+  DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
   [ -n "${VOL_KOHA_LOGS:-}" ] || die "VOL_KOHA_LOGS is required in env.${AUTONOMOUS_ENVIRONMENT}.enc"
 }
 
@@ -91,8 +95,12 @@ main() {
   now_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
   local services
-  services="$(docker compose config --services)"
-  [ -n "${services}" ] || die "No docker compose services found"
+  if [[ "$(docker_runtime_mode)" == "swarm" ]]; then
+    services="$(docker service ls --filter "label=com.docker.stack.namespace=${STACK_NAME:-koha}" --format '{{.Name}}' | sed "s/^${STACK_NAME:-koha}_//")"
+  else
+    services="$(docker compose -f "${KOHA_COMPOSE_FILE}" config --services)"
+  fi
+  [ -n "${services}" ] || die "No docker services found"
 
   local total_lines=0
   local service
@@ -106,7 +114,7 @@ main() {
 
     local tmp
     tmp="$(mktemp)"
-    if ! docker compose logs --no-color --since "${since_value}" "${service}" >"${tmp}" 2>/dev/null; then
+    if ! docker_runtime_logs "${service}" --no-color --since "${since_value}" >"${tmp}" 2>/dev/null; then
       warn "Failed to collect logs for service: ${service}"
       rm -f "${tmp}"
       continue

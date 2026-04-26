@@ -133,6 +133,45 @@ docker_runtime_restart_service() {
   esac
 }
 
+docker_runtime_scale_service() {
+  local service="$1"
+  local replicas="$2"
+  local stack="${STACK_NAME:-koha}"
+
+  case "$(docker_runtime_mode)" in
+    compose)
+      if [[ "${replicas}" == "0" ]]; then
+        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" stop "${service}"
+      else
+        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" up -d "${service}"
+      fi
+      ;;
+    swarm)
+      docker service scale "${stack}_${service}=${replicas}" >/dev/null
+      ;;
+  esac
+}
+
+docker_runtime_logs() {
+  local service="$1"
+  shift || true
+
+  case "$(docker_runtime_mode)" in
+    compose)
+      docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" logs "$@" "${service}"
+      ;;
+    swarm)
+      local args=()
+      local arg
+      for arg in "$@"; do
+        [[ "${arg}" == "--no-color" ]] && continue
+        args+=("${arg}")
+      done
+      docker service logs "${args[@]}" "${STACK_NAME:-koha}_${service}"
+      ;;
+  esac
+}
+
 docker_runtime_swarm_exec() {
   local service="$1"
   shift
@@ -145,6 +184,27 @@ docker_runtime_swarm_exec() {
   fi
 
   docker exec -i "${cid}" "$@"
+}
+
+docker_runtime_cp_to_service() {
+  local service="$1"
+  local src="$2"
+  local dest="$3"
+
+  case "$(docker_runtime_mode)" in
+    compose)
+      local cid
+      cid="$(docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" ps -q "${service}")"
+      [[ -n "${cid}" ]] || docker_runtime_die "Compose service not found: ${service}"
+      docker cp "${src}" "${cid}:${dest}"
+      ;;
+    swarm)
+      local cid
+      cid="$(docker_runtime_swarm_container_id "${service}")"
+      [[ -n "${cid}" ]] || docker_runtime_die "Swarm service not found: ${STACK_NAME:-koha}_${service}"
+      docker cp "${src}" "${cid}:${dest}"
+      ;;
+  esac
 }
 
 docker_runtime_exec() {
