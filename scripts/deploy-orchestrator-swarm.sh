@@ -8,10 +8,23 @@ MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-koha}"
 ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
 RUNTIME_ENV_FILE=""
+RAW_MANIFEST=""
+DEPLOY_MANIFEST=""
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
 }
+
+cleanup() {
+  rm -f \
+    "${RAW_MANIFEST:-}" \
+    "${DEPLOY_MANIFEST:-}" \
+    "${RUNTIME_ENV_FILE:-}" \
+    "${PROJECT_ROOT}/.koha.stack.raw.fYC8HY.yml" \
+    "${PROJECT_ROOT}/.koha.stack.deploy.nvOviW.yml"
+}
+
+trap cleanup EXIT
 
 detect_compose_file() {
   if [[ -f "docker-compose.yaml" ]]; then
@@ -209,13 +222,12 @@ run_ansible_secrets_if_configured() {
 }
 
 deploy_swarm() {
-  local compose_file swarm_file raw_manifest deploy_manifest
+  local compose_file swarm_file
 
   compose_file="$(detect_compose_file)"
   swarm_file="docker-compose.swarm.yml"
-  raw_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
-  deploy_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
-  trap 'rm -f "${raw_manifest:-}" "${deploy_manifest:-}" "${RUNTIME_ENV_FILE:-}"' EXIT
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
 
   if [[ -z "${compose_file}" ]]; then
     log "ERROR: compose file not found (expected docker-compose.yaml|yml)"
@@ -247,12 +259,12 @@ deploy_swarm() {
   docker compose --env-file "${ENV_FILE}" \
     -f "${compose_file}" \
     -f "${swarm_file}" \
-    config > "${raw_manifest}"
+    config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" > "${deploy_manifest}"
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
-  docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
+  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
 
   run_post_deploy_scripts
 

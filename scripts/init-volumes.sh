@@ -8,6 +8,7 @@
 # - VOL_KOHA_CONF      -> /etc/koha/sites
 # - VOL_KOHA_DATA      -> /var/lib/koha
 # - VOL_KOHA_LOGS      -> /var/log/koha
+# - BACKUP_PATH        -> local backup root
 #
 # Використання:
 #   ./scripts/init-volumes.sh
@@ -59,6 +60,7 @@ load_orchestrator_env_file "${ENV_FILE}"
 : "${VOL_KOHA_CONF:?VOL_KOHA_CONF is required in .env}"
 : "${VOL_KOHA_DATA:?VOL_KOHA_DATA is required in .env}"
 : "${VOL_KOHA_LOGS:?VOL_KOHA_LOGS is required in .env}"
+: "${BACKUP_PATH:?BACKUP_PATH is required in .env}"
 
 # --- 3) UID/GID mapping (overrideable via .env) ---
 # MariaDB офіційно зазвичай mysql (999:999) у Debian-based образах.
@@ -72,6 +74,8 @@ KOHA_UID="${KOHA_UID:-1000}"
 KOHA_GID="${KOHA_GID:-1000}"
 KOHA_CONF_UID="${KOHA_CONF_UID:-0}"
 KOHA_CONF_GID="${KOHA_CONF_GID:-1000}"
+BACKUP_UID="${BACKUP_UID:-$(id -u)}"
+BACKUP_GID="${BACKUP_GID:-$(id -g)}"
 
 if [[ "${USE_ELASTICSEARCH:-true}" =~ ^([Ff][Aa][Ll][Ss][Ee]|0|no|NO)$ ]]; then
   SKIP_ES=true
@@ -101,6 +105,7 @@ VOL_DB_PATH="$(abspath "$VOL_DB_PATH")"
 VOL_KOHA_CONF="$(abspath "$VOL_KOHA_CONF")"
 VOL_KOHA_DATA="$(abspath "$VOL_KOHA_DATA")"
 VOL_KOHA_LOGS="$(abspath "$VOL_KOHA_LOGS")"
+BACKUP_PATH="$(abspath "$BACKUP_PATH")"
 if ! $SKIP_ES; then
   VOL_ES_PATH="$(abspath "$VOL_ES_PATH")"
 fi
@@ -109,6 +114,7 @@ guard_path "$VOL_DB_PATH"
 guard_path "$VOL_KOHA_CONF"
 guard_path "$VOL_KOHA_DATA"
 guard_path "$VOL_KOHA_LOGS"
+guard_path "$BACKUP_PATH"
 if ! $SKIP_ES; then
   guard_path "$VOL_ES_PATH"
 fi
@@ -248,6 +254,7 @@ ensure_dir "$VOL_DB_PATH"
 ensure_dir "$VOL_KOHA_CONF"
 ensure_dir "$VOL_KOHA_DATA"
 ensure_dir "$VOL_KOHA_LOGS"
+ensure_dir "$BACKUP_PATH"
 if ! $SKIP_ES; then
   ensure_dir "$VOL_ES_PATH"
 fi
@@ -275,6 +282,10 @@ chown_recursive "$KOHA_UID" "$KOHA_GID" "$VOL_KOHA_LOGS"
 chmod_path 775 "$VOL_KOHA_DATA"
 chmod_path 775 "$VOL_KOHA_LOGS"
 
+echo " -> Backup root (${BACKUP_UID}:${BACKUP_GID})"
+chown_recursive "$BACKUP_UID" "$BACKUP_GID" "$BACKUP_PATH"
+chmod_path 750 "$BACKUP_PATH"
+
 # --- 8) Optional: fix existing perms (remove 777 etc.) ---
 if $FIX_EXISTING; then
   echo "==> --fix-existing enabled: normalizing permissions inside volumes."
@@ -293,11 +304,14 @@ if $FIX_EXISTING; then
   echo " -> Fixing Koha data/logs modes (dirs=775, files=664)"
   fix_modes_path "$VOL_KOHA_DATA" 775 664
   fix_modes_path "$VOL_KOHA_LOGS" 775 664
+
+  echo " -> Fixing backup root modes (dirs=750, files=640)"
+  fix_modes_path "$BACKUP_PATH" 750 640
 fi
 
 echo "==> Done! Volumes are ready."
 if $SKIP_ES; then
-  ls -ld "$VOL_DB_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS"
+  ls -ld "$VOL_DB_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS" "$BACKUP_PATH"
 else
-  ls -ld "$VOL_DB_PATH" "$VOL_ES_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS"
+  ls -ld "$VOL_DB_PATH" "$VOL_ES_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS" "$BACKUP_PATH"
 fi
