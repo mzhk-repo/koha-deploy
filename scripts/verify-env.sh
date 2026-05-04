@@ -10,6 +10,10 @@ EXAMPLE_FILE="${EXAMPLE_FILE:-${PROJECT_ROOT}/.env.example}"
 EXAMPLE_ONLY="false"
 COMPOSE_FILE="${COMPOSE_FILE:-${PROJECT_ROOT}/docker-compose.yaml}"
 
+if [ ! -f "${COMPOSE_FILE}" ] && [ -f "${PROJECT_ROOT}/docker-compose.yml" ]; then
+  COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
+fi
+
 fail() {
   echo "ERROR: $*" >&2
   exit 1
@@ -104,7 +108,8 @@ fi
 ops_required_file="${tmp_dir}/ops-required.keys"
 cat > "${ops_required_file}" <<'OPS'
 BACKUP_PATH
-BACKUP_OFFSITE_PATH
+BACKUP_RCLONE_REMOTE
+BACKUP_RCLONE_FOLDER
 BACKUP_OFFSITE_EXCLUDE_FILES
 BACKUP_TMP_ROOT
 BACKUP_RETENTION_DAYS
