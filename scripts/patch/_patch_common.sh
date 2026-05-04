@@ -6,14 +6,23 @@ set -euo pipefail
 
 PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${PATCH_DIR}/../.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENV_FILE="${ENV_FILE:-}"
 WAIT_TIMEOUT=300
 DRY_RUN=false
 NO_WAIT=false
 
+# shellcheck disable=SC1091
+. "${PROJECT_ROOT}/scripts/lib/orchestrator-env.sh"
+# shellcheck disable=SC1091
+. "${PROJECT_ROOT}/scripts/lib/docker-runtime.sh"
+
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 die() { printf '[%s] ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; exit 1; }
+
+detect_project_compose_file() {
+  docker_runtime_detect_compose_file "${PROJECT_ROOT}"
+}
 
 parse_common_args() {
   while [ "$#" -gt 0 ]; do
@@ -49,33 +58,12 @@ parse_common_args() {
 }
 
 load_env_file() {
-  [ -f "${ENV_FILE}" ] || die ".env file not found: ${ENV_FILE}"
-
-  local line key value
-  while IFS= read -r line || [ -n "${line}" ]; do
-    line="${line%$'\r'}"
-    [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
-
-    if [[ ! "${line}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-      die "Invalid dotenv line in ${ENV_FILE}: ${line}"
-    fi
-
-    key="${line%%=*}"
-    value="${line#*=}"
-
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-
-    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
-      value="${value:1:${#value}-2}"
-    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
-      value="${value:1:${#value}-2}"
-    fi
-
-    export "${key}=${value}"
-  done < "${ENV_FILE}"
+  ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+  KOHA_COMPOSE_FILE="$(detect_project_compose_file)"
+  DOCKER_RUNTIME_COMPOSE_FILE="${KOHA_COMPOSE_FILE}"
+  DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
+  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+  load_orchestrator_env_file "${ENV_FILE}"
 }
 
 wait_for_file() {

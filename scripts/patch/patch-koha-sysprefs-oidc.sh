@@ -124,8 +124,7 @@ ORDER BY variable;
 "
 
   log "Discovering current OIDC-like systempreferences"
-  docker compose --env-file "${ENV_FILE}" -f "${PROJECT_ROOT}/docker-compose.yaml" exec -T \
-    db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
+  docker_runtime_exec db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
 }
 
 apply_oidc_prefs() {
@@ -160,8 +159,7 @@ apply_oidc_prefs() {
     return 0
   fi
 
-  docker compose --env-file "${ENV_FILE}" -f "${PROJECT_ROOT}/docker-compose.yaml" exec -T \
-    db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
+  docker_runtime_exec db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${sql}"
 }
 
 verify_oidc_prefs() {
@@ -175,8 +173,7 @@ verify_oidc_prefs() {
     pref_value="${OIDC_PREF_VALUES[$i]}"
     pref_name_sql="$(sql_escape "${pref_name}")"
 
-    actual="$(docker compose --env-file "${ENV_FILE}" -f "${PROJECT_ROOT}/docker-compose.yaml" exec -T \
-      db mariadb -N -B -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" \
+    actual="$(docker_runtime_exec db mariadb -N -B -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" \
       -e "SELECT value FROM systempreferences WHERE variable='${pref_name_sql}' LIMIT 1;")"
 
     if [ "${actual}" != "${pref_value}" ]; then

@@ -6,19 +6,22 @@ umask 027
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENVIRONMENT_ARG=""
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 die() { printf '[%s] ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; exit 1; }
 
 load_env() {
-  [ -f "${ENV_FILE}" ] || die ".env not found: ${ENV_FILE}"
-  set -a
-  # shellcheck disable=SC1090
-  . "${ENV_FILE}"
-  set +a
-  [ -n "${VOL_KOHA_LOGS:-}" ] || die "VOL_KOHA_LOGS is required in .env"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/autonomous-env.sh"
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/lib/docker-runtime.sh"
+  ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
+  load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
+  DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
+  [ -n "${VOL_KOHA_LOGS:-}" ] || die "VOL_KOHA_LOGS is required in env.${AUTONOMOUS_ENVIRONMENT}.enc"
 }
 
 usage() {
@@ -27,6 +30,7 @@ Usage: ./scripts/collect-docker-logs.sh [options]
 
 Options:
   --since VALUE     Override 'since' window (e.g. 30m, 2h, 2026-03-01T10:00:00Z)
+  --env dev|prod    Environment to decrypt (default: SERVER_ENV)
   --dry-run         Do not write files/state, only print summary
   --help            Show help
 
@@ -40,6 +44,7 @@ USAGE
 main() {
   local since_override=""
   local dry_run=false
+  local original_args=("$@")
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -50,6 +55,12 @@ main() {
         ;;
       --dry-run)
         dry_run=true
+        ;;
+      --env)
+        shift
+        [ "$#" -gt 0 ] || die "--env requires value"
+        ;;
+      --env=*)
         ;;
       --help|-h)
         usage
@@ -62,7 +73,7 @@ main() {
     shift
   done
 
-  load_env
+  load_env "${original_args[@]}"
 
   local export_root="${LOG_EXPORT_ROOT:-${VOL_KOHA_LOGS}/centralized/docker}"
   local state_file="${LOG_STATE_FILE:-${VOL_KOHA_LOGS}/centralized/.docker_logs_since}"
@@ -84,8 +95,12 @@ main() {
   now_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
   local services
-  services="$(docker compose config --services)"
-  [ -n "${services}" ] || die "No docker compose services found"
+  if [[ "$(docker_runtime_mode)" == "swarm" ]]; then
+    services="$(docker service ls --filter "label=com.docker.stack.namespace=${STACK_NAME:-koha}" --format '{{.Name}}' | sed "s/^${STACK_NAME:-koha}_//")"
+  else
+    services="$(docker compose -f "${KOHA_COMPOSE_FILE}" config --services)"
+  fi
+  [ -n "${services}" ] || die "No docker services found"
 
   local total_lines=0
   local service
@@ -99,7 +114,7 @@ main() {
 
     local tmp
     tmp="$(mktemp)"
-    if ! docker compose logs --no-color --since "${since_value}" "${service}" >"${tmp}" 2>/dev/null; then
+    if ! docker_runtime_logs "${service}" --no-color --since "${since_value}" >"${tmp}" 2>/dev/null; then
       warn "Failed to collect logs for service: ${service}"
       rm -f "${tmp}"
       continue

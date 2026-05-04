@@ -26,7 +26,7 @@
 
 ## 3. Налаштування
 
-Значення в `.env`:
+Значення в `env.dev.enc` / `env.prod.enc`:
 
 - `BACKUP_PATH=/var/backups/koha` (повний backup set)
 - `BACKUP_RCLONE_REMOTE=koha-backups` (назва remote з `rclone config`)
@@ -43,18 +43,22 @@
 
 ```bash
 ./scripts/backup.sh
+# або явно:
+./scripts/backup.sh --env prod
 ```
 
 Рекомендований cron (щодня 02:15):
 
 ```cron
-15 2 * * * cd /home/pinokew/Koha/koha-deploy && ./scripts/backup.sh >> /var/log/koha-backup.log 2>&1
+15 2 * * * cd /opt/Koha/koha-deploy && SERVER_ENV=prod ./scripts/backup.sh >> /var/log/koha-backup.log 2>&1
 ```
 
 ## 5. Dry-run перевірка backup set
 
 ```bash
 ./scripts/restore.sh --source /path/to/backup_dir --dry-run
+# або явно:
+./scripts/restore.sh --env prod --source /path/to/backup_dir --dry-run
 ```
 
 Що перевіряє dry-run:
@@ -67,6 +71,8 @@
 
 ```bash
 ./scripts/restore.sh --source /path/to/backup_dir --yes
+# або явно:
+./scripts/restore.sh --env prod --source /path/to/backup_dir --yes
 ```
 
 Скрипт виконує:
@@ -85,6 +91,7 @@
 
 ```bash
 ./scripts/restore.sh \
+  --env prod \
   --source /path/to/backup_dir \
   --pitr-datetime "2026-02-28 12:30:00" \
   --yes
@@ -118,8 +125,8 @@ docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
 Мінімальний протокол:
 
 1. Взяти останній backup set.
-2. `scripts/restore.sh --dry-run`.
-3. `scripts/restore.sh --yes` у тестовому середовищі.
+2. `scripts/restore.sh --env dev --source <backup_dir> --dry-run`.
+3. `scripts/restore.sh --env dev --source <backup_dir> --yes` у тестовому середовищі.
 4. Зафіксувати фактичні:
    - старт restore
    - час готовності сервісів
@@ -133,6 +140,6 @@ docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
 - ES rebuild впав на `icu_folding`:
   - перевірити `analysis-icu` у ES (`elasticsearch-plugin list`)
 - Koha показує memcached `127.0.0.1`:
-  - перевірити `koha-conf.xml` і `MEMCACHED_SERVERS` в `.env`
+  - перевірити `koha-conf.xml` і `MEMCACHED_SERVERS` в `env.<env>.enc`
 - RabbitMQ fallback (SQL polling):
   - перевірити плагіни `rabbitmq_stomp` / `rabbitmq_web_stomp`

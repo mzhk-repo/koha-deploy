@@ -85,7 +85,6 @@ WHERE variable IN ('OPACBaseURL','staffClientBaseURL')
 ORDER BY variable;
 "
 
-docker compose --env-file "${ENV_FILE}" -f "${PROJECT_ROOT}/docker-compose.yaml" exec -T \
-  db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${SQL}"
+docker_runtime_exec db mariadb -uroot "-p${DB_ROOT_PASS}" -D "${DB_NAME}" -e "${SQL}"
 
 log "Done: domain system preferences"

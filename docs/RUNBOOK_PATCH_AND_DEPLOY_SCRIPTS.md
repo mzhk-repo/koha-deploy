@@ -109,7 +109,11 @@ bash scripts/deploy-orchestrator.sh
 ### Логіка restart
 - Якщо виконувався хоча б один patch-модуль (окрім `verify`), у кінці робиться:
   ```bash
-  docker compose -f docker-compose.yaml --env-file <env> up -d koha
+  # compose fallback
+  docker compose -f docker-compose.yml --env-file <env> up -d koha
+
+  # swarm path
+  docker service update --force ${STACK_NAME:-koha}_koha
   ```
 - `--no-restart` вимикає цей крок.
 - `--dry-run` завжди пропускає restart.
@@ -304,8 +308,10 @@ bash scripts/init-volumes.sh --fix-existing
 
 ## 13) Обмеження та примітки щодо Swarm
 
-- Patch-скрипти жорстко використовують `docker compose -f docker-compose.yaml ...`, а не `docker stack`.
-- Для Swarm-процесів ці скрипти можна використовувати лише якщо на вузлі доступний той самий compose-проєкт/DB-контейнер під очікуваними іменами.
+- Patch/lockdown exec-команди проходять через `scripts/lib/docker-runtime.sh`.
+- У `ORCHESTRATOR_MODE=swarm` runtime шукає task container за label `com.docker.swarm.service.name=${STACK_NAME}_${service}`.
+- Якщо Swarm container/service не знайдено, зберігається fallback на `docker compose`.
+- `bootstrap-live-configs.sh` у Swarm path рестартить Koha через `docker service update --force ${STACK_NAME}_koha`.
 
 ---
 

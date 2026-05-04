@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+ENV_FILE="${ENV_FILE:-}"
 WAIT_TIMEOUT=300
 DRY_RUN=false
 NO_RESTART=false
@@ -26,7 +26,7 @@ Module selection:
   --list-modules        Print available modules and exit
 
 Runtime options:
-  --env-file FILE       Path to env file (default: ./.env)
+  --env-file FILE       Path to env file (default: ORCHESTRATOR_ENV_FILE, fallback ./.env for dev)
   --wait-timeout SEC    Wait timeout for koha-conf.xml (default: 300)
   --dry-run             Run modules in dry-run mode
   --no-restart          Do not restart koha after patch modules
@@ -122,7 +122,16 @@ while [ "$#" -gt 0 ]; do
 done
 
 [[ "${WAIT_TIMEOUT}" =~ ^[0-9]+$ ]] || die "--wait-timeout must be numeric"
-[ -f "${ENV_FILE}" ] || die ".env file not found: ${ENV_FILE}"
+
+detect_compose_file() {
+  if [[ -f "${PROJECT_ROOT}/docker-compose.yaml" ]]; then
+    printf '%s\n' "${PROJECT_ROOT}/docker-compose.yaml"
+  elif [[ -f "${PROJECT_ROOT}/docker-compose.yml" ]]; then
+    printf '%s\n' "${PROJECT_ROOT}/docker-compose.yml"
+  else
+    die "Compose file not found (expected docker-compose.yaml|yml)"
+  fi
+}
 
 if ${LIST_MODULES}; then
   printf 'Available modules:\n'
@@ -131,6 +140,16 @@ if ${LIST_MODULES}; then
   done
   exit 0
 fi
+
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/orchestrator-env.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/docker-runtime.sh"
+ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+COMPOSE_FILE="$(detect_compose_file)"
+DOCKER_RUNTIME_COMPOSE_FILE="${COMPOSE_FILE}"
+DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
+export DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
 
 if ${USE_ALL} || [ "${#selected_modules[@]}" -eq 0 ]; then
   selected_modules=("${MODULE_ORDER[@]}")
@@ -187,10 +206,7 @@ fi
 
 if ${needs_restart}; then
   log "Restarting koha to apply patched live config"
-  if ! docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" restart koha >/dev/null; then
-    log "koha container not running yet; starting with up -d"
-    docker compose -f "${PROJECT_ROOT}/docker-compose.yaml" --env-file "${ENV_FILE}" up -d koha >/dev/null
-  fi
+  docker_runtime_restart_service koha >/dev/null
   log "Restart complete"
 else
   log "No patch module requiring restart was run"
