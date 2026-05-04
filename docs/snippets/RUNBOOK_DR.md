@@ -29,7 +29,8 @@
 Значення в `.env`:
 
 - `BACKUP_PATH=/var/backups/koha` (повний backup set)
-- `BACKUP_OFFSITE_PATH=/home/pinokew/GoogleDrive/kdv-drive/KDV_Backups/Koha` (легка offsite-копія)
+- `BACKUP_RCLONE_REMOTE=koha-backups` (назва remote з `rclone config`)
+- `BACKUP_RCLONE_FOLDER=KDV_Backups/Koha` (папка всередині remote; можна залишити порожньою для кореня remote)
 - `BACKUP_OFFSITE_EXCLUDE_FILES=koha_data.tar.gz` (виключення важкого медіа-архіву; список через кому)
 - `DB_LOG_BIN_BASENAME=mysql-bin`
 - `DB_BINLOG_FORMAT=ROW`

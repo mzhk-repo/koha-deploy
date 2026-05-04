@@ -45,21 +45,6 @@ safe_mkdir() {
   rm -f "${path}/.write_test"
 }
 
-should_exclude_offsite_file() {
-  local filename="$1"
-  local pattern
-  local csv="${BACKUP_OFFSITE_EXCLUDE_FILES:-koha_data.tar.gz}"
-
-  IFS=',' read -r -a OFFSITE_EXCLUDE_PATTERNS <<< "${csv}"
-  for pattern in "${OFFSITE_EXCLUDE_PATTERNS[@]}"; do
-    [ -n "${pattern}" ] || continue
-    if [[ "${filename}" == "${pattern}" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 archive_bind_path() {
   local src="$1"
   local out="$2"
@@ -153,7 +138,8 @@ write_metadata() {
 BACKUP_TIMESTAMP=${TS}
 BACKUP_HOST=$(hostname)
 BACKUP_ROOT=${BACKUP_ROOT}
-BACKUP_OFFSITE_PATH=${BACKUP_OFFSITE_PATH}
+BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE}
+BACKUP_RCLONE_FOLDER=${BACKUP_RCLONE_FOLDER}
 BACKUP_OFFSITE_EXCLUDE_FILES=${BACKUP_OFFSITE_EXCLUDE_FILES}
 DB_NAME=${DB_NAME}
 KOHA_INSTANCE=${KOHA_INSTANCE:-library}
@@ -169,29 +155,33 @@ META
 }
 
 copy_lightweight_offsite() {
-  local offsite_root="${BACKUP_OFFSITE_PATH:-}"
-  local offsite_dir src base
+  local remote="${BACKUP_RCLONE_REMOTE:-}"
+  local folder="${BACKUP_RCLONE_FOLDER:-}"
+  local remote_root offsite_dir pattern
+  local -a exclude_args=()
 
-  if [ -z "${offsite_root}" ]; then
-    log "Offsite lightweight copy skipped (BACKUP_OFFSITE_PATH is empty)"
+  if [ -z "${remote}" ]; then
+    log "Offsite lightweight copy skipped (BACKUP_RCLONE_REMOTE is empty)"
     return 0
   fi
 
-  safe_mkdir "${offsite_root}"
-  offsite_dir="${offsite_root%/}/${TS}"
-  [ ! -e "${offsite_dir}" ] || die "Offsite backup dir already exists: ${offsite_dir}"
-  mkdir -p "${offsite_dir}"
+  command -v rclone >/dev/null 2>&1 || die "rclone is required when BACKUP_RCLONE_REMOTE is set"
 
-  for src in "${FINAL_DIR}"/*; do
-    [ -e "${src}" ] || continue
-    base="$(basename "${src}")"
-    if should_exclude_offsite_file "${base}"; then
-      log "Offsite exclude: ${base}"
-      continue
-    fi
-    cp -a "${src}" "${offsite_dir}/${base}"
+  folder="${folder#/}"
+  remote_root="${remote}:"
+  if [ -n "${folder}" ]; then
+    remote_root="${remote_root}${folder%/}"
+  fi
+  offsite_dir="${remote_root%/}/${TS}"
+
+  IFS=',' read -r -a OFFSITE_EXCLUDE_PATTERNS <<< "${BACKUP_OFFSITE_EXCLUDE_FILES}"
+  for pattern in "${OFFSITE_EXCLUDE_PATTERNS[@]}"; do
+    [ -n "${pattern}" ] || continue
+    log "Offsite exclude: ${pattern}"
+    exclude_args+=(--exclude "${pattern}")
   done
 
+  rclone copy "${FINAL_DIR}" "${offsite_dir}" "${exclude_args[@]}"
   log "Offsite lightweight copy completed: ${offsite_dir}"
 }
 
@@ -219,7 +209,8 @@ main() {
   require_vars
 
   BACKUP_ROOT="${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
-  BACKUP_OFFSITE_PATH="${BACKUP_OFFSITE_PATH:-}"
+  BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
+  BACKUP_RCLONE_FOLDER="${BACKUP_RCLONE_FOLDER:-}"
   BACKUP_OFFSITE_EXCLUDE_FILES="${BACKUP_OFFSITE_EXCLUDE_FILES:-koha_data.tar.gz}"
   BACKUP_TMP_ROOT="${BACKUP_TMP_ROOT:-/tmp}"
   BACKUP_INCLUDE_LOGS="${BACKUP_INCLUDE_LOGS:-true}"
@@ -285,7 +276,6 @@ main() {
 
   copy_lightweight_offsite
   apply_retention "${BACKUP_ROOT}"
-  apply_retention "${BACKUP_OFFSITE_PATH:-}"
 
   log "Backup completed: ${FINAL_DIR}"
   ls -lh "${FINAL_DIR}"

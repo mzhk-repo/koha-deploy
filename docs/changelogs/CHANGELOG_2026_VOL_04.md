@@ -586,3 +586,34 @@
   - `bash scripts/bootstrap-live-configs.sh --module identity-provider` — OK;
   - у БД підтверджено актуальні значення `identity_providers`/`identity_provider_domains` для `AzureID`;
   - Google sysprefs підтверджено у вимкненому/очищеному стані (`GoogleOpenIDConnect=0`, `GoogleOpenIDConnectAutoRegister=0`, `RESTOAuth2ClientCredentials=0`, решта очищені).
+
+---
+
+## 2026-05-04
+
+### 21) Backup offsite-копію переведено з host bind path на Rclone remote
+
+- Контекст:
+  - легка offsite-копія backup set більше не має залежати від змонтованої Google Drive папки на хості;
+  - ціль offsite має задаватися через `rclone config`.
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/scripts/backup.sh](/home/pinokew/Koha/koha-deploy/scripts/backup.sh)
+  - [/home/pinokew/Koha/koha-deploy/scripts/verify-env.sh](/home/pinokew/Koha/koha-deploy/scripts/verify-env.sh)
+  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
+  - [/home/pinokew/Koha/koha-deploy/docs/snippets/RUNBOOK_DR.md](/home/pinokew/Koha/koha-deploy/docs/snippets/RUNBOOK_DR.md)
+
+- Зміни:
+  - `BACKUP_OFFSITE_PATH` замінено на:
+    - `BACKUP_RCLONE_REMOTE` - назва remote з `rclone config`;
+    - `BACKUP_RCLONE_FOLDER` - папка всередині remote.
+  - `scripts/backup.sh` тепер виконує lightweight offsite upload через `rclone copy`;
+  - якщо `BACKUP_RCLONE_REMOTE` порожній, offsite-копія пропускається;
+  - якщо `BACKUP_RCLONE_REMOTE` заданий, але `rclone` недоступний, backup завершується з явною помилкою;
+  - `scripts/verify-env.sh` отримав fallback з `docker-compose.yaml` на фактичний `docker-compose.yml`;
+  - локальний retention для `BACKUP_PATH` збережено, offsite retention для старого bind path прибрано.
+
+- Перевірено:
+  - `bash -n scripts/backup.sh` - OK;
+  - `bash -n scripts/verify-env.sh` - OK;
+  - `bash scripts/verify-env.sh` - OK (`.env` відсутній, перевірка автоматично перейшла в `--example-only`).
