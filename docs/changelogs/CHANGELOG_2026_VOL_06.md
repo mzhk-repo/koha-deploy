@@ -349,6 +349,7 @@
   - `init-volumes.sh` тепер створює і нормалізує `${VOL_KOHA_CONF}/${KOHA_INSTANCE}`;
   - Swarm timeout у deploy-orchestrator тепер друкує `docker service ps <service> --no-trunc`;
   - deploy-orchestrator перед `stack deploy` build-ить локальний image для `es` (`ORCHESTRATOR_SWARM_BUILD_SERVICES`, default: `es`), бо Elasticsearch потребує `analysis-icu`;
+  - після `stack deploy` deploy-orchestrator виконує `docker service update --force` для сервісів `ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES` (default: `es koha`), щоб перезапустити rejected task-и з незміненим service spec;
   - `rabbitmq` у Swarm переведено на офіційний `docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}`;
   - RabbitMQ plugins (`rabbitmq_management`, `rabbitmq_stomp`, `rabbitmq_web_stomp`) передаються через Docker Config;
   - `memcached` у Swarm переведено на офіційний `docker.io/memcached:${MEMCACHED_VERSION:-1.6}`.

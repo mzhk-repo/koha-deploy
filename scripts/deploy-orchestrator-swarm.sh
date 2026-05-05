@@ -181,6 +181,29 @@ build_swarm_local_images() {
   done
 }
 
+force_swarm_service_reconcile() {
+  local force_services="${ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es} koha}"
+  local service_list=()
+  local service service_name
+
+  read -r -a service_list <<< "${force_services}"
+  if [[ "${#service_list[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  for service in "${service_list[@]}"; do
+    [[ -n "${service}" ]] || continue
+    service_name="${STACK_NAME}_${service}"
+
+    if docker service inspect "${service_name}" >/dev/null 2>&1; then
+      log "Forcing Swarm service reconcile: ${service_name}"
+      docker service update --force "${service_name}" >/dev/null
+    else
+      log "Swarm service not found for force update, skip: ${service_name}"
+    fi
+  done
+}
+
 run_post_deploy_scripts() {
   local wait_timeout="${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
 
@@ -297,6 +320,7 @@ deploy_swarm() {
 
   log "Deploying stack ${STACK_NAME}"
   docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+  force_swarm_service_reconcile
 
   run_post_deploy_scripts
 
