@@ -331,3 +331,29 @@
   - `shellcheck scripts/backup.sh scripts/verify-env.sh` - OK;
   - `bash scripts/verify-env.sh --example-only` - OK;
   - `bash scripts/backup.sh --env dev --dry-run` - OK (`BACKUP_RCLONE_RETENTION_DAYS=0`, remote retention disabled).
+
+### 25) Swarm deploy: виправлено причини `0/1` для Koha-adjacent сервісів
+
+- Контекст:
+  - `docker stack deploy` успішно створював `koha_db`, але `koha_koha`, `koha_es`, `koha_rabbitmq` і `koha_memcached` лишались `0/1`;
+  - `koha_koha` відхилявся через відсутній bind source `${VOL_KOHA_CONF}/${KOHA_INSTANCE}`;
+  - `es`, `rabbitmq` і `memcached` відхилялись через локальні `koha-local-*` images у Swarm.
+
+- Оновлено:
+  - `scripts/init-volumes.sh`
+  - `scripts/deploy-orchestrator-swarm.sh`
+  - `docker-compose.swarm.yml`
+  - `rabbitmq/enabled_plugins`
+
+- Зміни:
+  - `init-volumes.sh` тепер створює і нормалізує `${VOL_KOHA_CONF}/${KOHA_INSTANCE}`;
+  - Swarm timeout у deploy-orchestrator тепер друкує `docker service ps <service> --no-trunc`;
+  - deploy-orchestrator перед `stack deploy` build-ить локальний image для `es` (`ORCHESTRATOR_SWARM_BUILD_SERVICES`, default: `es`), бо Elasticsearch потребує `analysis-icu`;
+  - `rabbitmq` у Swarm переведено на офіційний `docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}`;
+  - RabbitMQ plugins (`rabbitmq_management`, `rabbitmq_stomp`, `rabbitmq_web_stomp`) передаються через Docker Config;
+  - `memcached` у Swarm переведено на офіційний `docker.io/memcached:${MEMCACHED_VERSION:-1.6}`.
+
+- Перевірено:
+  - `bash -n scripts/init-volumes.sh scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` - OK.

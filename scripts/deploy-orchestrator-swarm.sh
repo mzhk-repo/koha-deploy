@@ -147,7 +147,38 @@ wait_for_swarm_container() {
   done
 
   log "ERROR: timeout waiting for Swarm container: ${service_name}"
+  print_swarm_service_diagnostics "${service_name}"
   exit 1
+}
+
+print_swarm_service_diagnostics() {
+  local service_name="$1"
+
+  if ! docker service inspect "${service_name}" >/dev/null 2>&1; then
+    log "Swarm service not found: ${service_name}"
+    return 0
+  fi
+
+  log "Recent Swarm tasks for ${service_name}:"
+  docker service ps "${service_name}" --no-trunc || true
+}
+
+build_swarm_local_images() {
+  local compose_file="$1"
+  local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es}"
+  local services=()
+  local service
+
+  read -r -a services <<< "${build_services}"
+  if [[ "${#services[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  for service in "${services[@]}"; do
+    [[ -n "${service}" ]] || continue
+    log "Building Swarm-local image for service: ${service}"
+    docker compose --env-file "${ENV_FILE}" -f "${compose_file}" build "${service}"
+  done
 }
 
 run_post_deploy_scripts() {
@@ -254,6 +285,7 @@ deploy_swarm() {
   run_ansible_secrets_if_configured
 
   run_pre_deploy_adjacent_scripts
+  build_swarm_local_images "${compose_file}"
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
