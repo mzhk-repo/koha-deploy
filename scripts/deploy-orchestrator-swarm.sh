@@ -10,6 +10,7 @@ ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
 RUNTIME_ENV_FILE=""
 RAW_MANIFEST=""
 DEPLOY_MANIFEST=""
+RECONCILE_CHANGED_SERVICES=()
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
@@ -172,7 +173,7 @@ build_swarm_local_images() {
   local compose_file="$1"
   local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es}"
   local services=()
-  local service
+  local service before_image_id after_image_id
 
   read -r -a services <<< "${build_services}"
   if [[ "${#services[@]}" -eq 0 ]]; then
@@ -181,18 +182,78 @@ build_swarm_local_images() {
 
   for service in "${services[@]}"; do
     [[ -n "${service}" ]] || continue
+    before_image_id="$(docker compose --env-file "${ENV_FILE}" -f "${compose_file}" images -q "${service}" 2>/dev/null | head -n 1 || true)"
     log "Building Swarm-local image for service: ${service}"
     docker compose --env-file "${ENV_FILE}" -f "${compose_file}" build "${service}"
+    after_image_id="$(docker compose --env-file "${ENV_FILE}" -f "${compose_file}" images -q "${service}" 2>/dev/null | head -n 1 || true)"
+
+    if [[ -z "${before_image_id}" || "${before_image_id}" != "${after_image_id}" ]]; then
+      add_reconcile_changed_service "${service}"
+    fi
   done
 }
 
+add_reconcile_changed_service() {
+  local service="$1"
+  local existing
+
+  for existing in "${RECONCILE_CHANGED_SERVICES[@]:-}"; do
+    [[ "${existing}" == "${service}" ]] && return 0
+  done
+
+  RECONCILE_CHANGED_SERVICES+=("${service}")
+}
+
+swarm_service_has_running_container() {
+  local service="$1"
+  local service_name="${STACK_NAME}_${service}"
+
+  docker ps -q \
+    --filter "label=com.docker.swarm.service.name=${service_name}" \
+    --filter "status=running" \
+    | head -n 1 \
+    | grep -q .
+}
+
+swarm_service_has_recent_rejected_task() {
+  local service="$1"
+  local service_name="${STACK_NAME}_${service}"
+
+  docker service ps "${service_name}" --no-trunc --format '{{.CurrentState}} {{.Error}}' 2>/dev/null \
+    | head -n 5 \
+    | grep -Eq 'Rejected|Failed|No such image|invalid mount config'
+}
+
+swarm_service_needs_reconcile() {
+  local service="$1"
+  local service_name="${STACK_NAME}_${service}"
+
+  docker service inspect "${service_name}" >/dev/null 2>&1 || return 1
+
+  if ! swarm_service_has_running_container "${service}"; then
+    return 0
+  fi
+
+  if swarm_service_has_recent_rejected_task "${service}"; then
+    return 0
+  fi
+
+  return 1
+}
+
 force_swarm_service_reconcile() {
-  local force_services="${ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es} koha}"
-  local service_list=()
+  local reconcile_candidates="${ORCHESTRATOR_SWARM_RECONCILE_CANDIDATES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es} koha}"
+  local service_list=("${RECONCILE_CHANGED_SERVICES[@]:-}")
   local service service_name
 
-  read -r -a service_list <<< "${force_services}"
-  if [[ "${#service_list[@]}" -eq 0 ]]; then
+  if [[ -n "${ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES:-}" ]]; then
+    read -r -a service_list <<< "${ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES}"
+  else
+    read -r -a service_list <<< "${reconcile_candidates}"
+    service_list+=("${RECONCILE_CHANGED_SERVICES[@]:-}")
+  fi
+
+  if [[ "${#service_list[@]}" -eq 0 || "${ORCHESTRATOR_SWARM_RECONCILE:-smart}" == "off" ]]; then
     return 0
   fi
 
@@ -200,11 +261,18 @@ force_swarm_service_reconcile() {
     [[ -n "${service}" ]] || continue
     service_name="${STACK_NAME}_${service}"
 
-    if docker service inspect "${service_name}" >/dev/null 2>&1; then
+    if ! docker service inspect "${service_name}" >/dev/null 2>&1; then
+      log "Swarm service not found for reconcile, skip: ${service_name}"
+      continue
+    fi
+
+    if [[ -n "${ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES:-}" ]] \
+      || [[ "${ORCHESTRATOR_SWARM_RECONCILE:-smart}" == "force" ]] \
+      || swarm_service_needs_reconcile "${service}"; then
       log "Forcing Swarm service reconcile: ${service_name}"
       docker service update --force "${service_name}" >/dev/null
     else
-      log "Swarm service not found for force update, skip: ${service_name}"
+      log "Swarm service is already running; skip reconcile: ${service_name}"
     fi
   done
 }

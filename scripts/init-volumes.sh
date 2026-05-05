@@ -246,6 +246,28 @@ fix_modes_path() {
   esac
 }
 
+set_host_user_acl() {
+  local path="$1"
+  local user_id="${INIT_VOLUMES_HOST_ACL_UID:-$(id -u)}"
+
+  command -v setfacl >/dev/null 2>&1 || return 0
+
+  case "$PRIV_MODE" in
+    root)
+      setfacl -R -m "u:${user_id}:rwX" "$path"
+      setfacl -R -d -m "u:${user_id}:rwX" "$path"
+      ;;
+    sudo)
+      sudo -n setfacl -R -m "u:${user_id}:rwX" "$path"
+      sudo -n setfacl -R -d -m "u:${user_id}:rwX" "$path"
+      ;;
+    docker)
+      # Docker helper can create/chown paths, but ACL tooling is host-specific.
+      # If host ACL access is needed, run this script as root or with passwordless sudo.
+      ;;
+  esac
+}
+
 case "$PRIV_MODE" in
   root) echo "==> Privileged mode: root" ;;
   sudo) echo "==> Privileged mode: passwordless sudo" ;;
@@ -281,6 +303,7 @@ echo " -> Koha config (${KOHA_CONF_UID}:${KOHA_CONF_GID})"
 chown_recursive "$KOHA_CONF_UID" "$KOHA_CONF_GID" "$VOL_KOHA_CONF"
 chmod_path 2775 "$VOL_KOHA_CONF"
 chmod_path 2775 "$VOL_KOHA_INSTANCE_CONF"
+set_host_user_acl "$VOL_KOHA_CONF"
 
 echo " -> Koha data/logs (${KOHA_UID}:${KOHA_GID})"
 chown_recursive "$KOHA_UID" "$KOHA_GID" "$VOL_KOHA_DATA"
