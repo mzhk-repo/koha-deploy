@@ -20,8 +20,13 @@ cleanup() {
     "${RAW_MANIFEST:-}" \
     "${DEPLOY_MANIFEST:-}" \
     "${RUNTIME_ENV_FILE:-}" \
-    "${PROJECT_ROOT}/.koha.stack.raw.fYC8HY.yml" \
-    "${PROJECT_ROOT}/.koha.stack.deploy.nvOviW.yml"
+    "${PROJECT_ROOT}/.koha.stack.raw.*.yml" \
+    "${PROJECT_ROOT}/.koha.stack.deploy.*.yml"
+  find "${PROJECT_ROOT}" -maxdepth 1 -type f \
+    \( -name ".${STACK_NAME}.env.*" \
+      -o -name ".${STACK_NAME}.stack.raw.*.yml" \
+      -o -name ".${STACK_NAME}.stack.deploy.*.yml" \) \
+    -delete
 }
 
 trap cleanup EXIT

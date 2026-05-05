@@ -39,8 +39,9 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(timezone trusted-proxies memcached message-broker smtp domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
+MODULE_ORDER=(db timezone trusted-proxies memcached message-broker smtp domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
 declare -A MODULE_SCRIPT=(
+  [db]="patch-koha-conf-xml-db.sh"
   [timezone]="patch-koha-conf-xml-timezone.sh"
   [trusted-proxies]="patch-koha-conf-xml-trusted-proxies.sh"
   [memcached]="patch-koha-conf-xml-memcached.sh"

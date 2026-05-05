@@ -340,6 +340,7 @@
   - `es`, `rabbitmq` і `memcached` відхилялись через локальні `koha-local-*` images у Swarm.
 
 - Оновлено:
+  - `.gitignore`
   - `scripts/init-volumes.sh`
   - `scripts/deploy-orchestrator-swarm.sh`
   - `docker-compose.swarm.yml`
@@ -350,6 +351,8 @@
   - Swarm timeout у deploy-orchestrator тепер друкує `docker service ps <service> --no-trunc`;
   - deploy-orchestrator перед `stack deploy` build-ить локальний image для `es` (`ORCHESTRATOR_SWARM_BUILD_SERVICES`, default: `es`), бо Elasticsearch потребує `analysis-icu`;
   - після `stack deploy` deploy-orchestrator виконує `docker service update --force` для сервісів `ORCHESTRATOR_SWARM_FORCE_UPDATE_SERVICES` (default: `es koha`), щоб перезапустити rejected task-и з незміненим service spec;
+  - cleanup deploy-orchestrator прибирає temp-файли `.koha.env.*`, `.koha.stack.raw.*.yml`, `.koha.stack.deploy.*.yml`;
+  - `.gitignore` ігнорує temp env/manifest артефакти Swarm deploy;
   - `rabbitmq` у Swarm переведено на офіційний `docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}`;
   - RabbitMQ plugins (`rabbitmq_management`, `rabbitmq_stomp`, `rabbitmq_web_stomp`) передаються через Docker Config;
   - `memcached` у Swarm переведено на офіційний `docker.io/memcached:${MEMCACHED_VERSION:-1.6}`.
@@ -358,3 +361,27 @@
   - `bash -n scripts/init-volumes.sh scripts/deploy-orchestrator-swarm.sh` - OK;
   - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
   - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` - OK.
+
+### 26) Koha live config: додано патч DB credentials перед runtime verify
+
+- Контекст:
+  - після виправлення Swarm mount/image проблем `koha_koha` створював container, але health лишався `starting`;
+  - логи Koha показували `Access denied for user 'koha_db'` і `Access refused for user 'koha_mq'`;
+  - live `koha-conf.xml` у volume містив застарілі/default credentials, а bootstrap verify не перевіряв секретні поля.
+
+- Оновлено:
+  - `scripts/bootstrap-live-configs.sh`
+  - `scripts/patch/patch-koha-conf-xml-db.sh`
+  - `scripts/patch/patch-koha-conf-xml-verify.sh`
+
+- Зміни:
+  - додано модуль `db`, який патчить основний DB block у `${VOL_KOHA_CONF}/${KOHA_INSTANCE}/koha-conf.xml` з env (`DB_NAME`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`);
+  - `bootstrap-live-configs.sh` запускає `db` перед іншими live config модулями;
+  - `patch-koha-conf-xml-verify.sh` тепер перевіряє DB connection block і secret-поля DB/RabbitMQ без виводу секретів у stdout або CLI args.
+
+- Перевірено:
+  - `bash -n scripts/bootstrap-live-configs.sh scripts/patch/patch-koha-conf-xml-db.sh scripts/patch/patch-koha-conf-xml-verify.sh` - OK;
+  - `shellcheck scripts/bootstrap-live-configs.sh scripts/patch/patch-koha-conf-xml-db.sh scripts/patch/patch-koha-conf-xml-verify.sh` - OK;
+  - `bash scripts/bootstrap-live-configs.sh --list-modules` - OK;
+  - `bash scripts/patch/patch-koha-conf-xml-db.sh --env-file .env.example --dry-run --no-wait` - OK;
+  - `git diff --check` - OK.
