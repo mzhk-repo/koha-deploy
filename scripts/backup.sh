@@ -155,6 +155,7 @@ BACKUP_HOST=$(hostname)
 BACKUP_ROOT=${BACKUP_ROOT}
 BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE}
 BACKUP_RCLONE_FOLDER=${BACKUP_RCLONE_FOLDER}
+BACKUP_RCLONE_RETENTION_DAYS=${BACKUP_RCLONE_RETENTION_DAYS}
 BACKUP_OFFSITE_EXCLUDE_FILES=${BACKUP_OFFSITE_EXCLUDE_FILES}
 DB_NAME=${DB_NAME}
 KOHA_INSTANCE=${KOHA_INSTANCE:-library}
@@ -167,6 +168,20 @@ META
     printf 'File\tSizeBytes\n'
     find "${WORK_DIR}" -maxdepth 1 -type f -printf "%f\t%s\n" | sort
   } >"${WORK_DIR}/backup_manifest.tsv"
+}
+
+rclone_remote_root() {
+  local remote="$1"
+  local folder="$2"
+  local remote_root
+
+  folder="${folder#/}"
+  remote_root="${remote}:"
+  if [ -n "${folder}" ]; then
+    remote_root="${remote_root}${folder%/}"
+  fi
+
+  printf '%s\n' "${remote_root}"
 }
 
 copy_lightweight_offsite() {
@@ -182,11 +197,7 @@ copy_lightweight_offsite() {
 
   command -v rclone >/dev/null 2>&1 || die "rclone is required when BACKUP_RCLONE_REMOTE is set"
 
-  folder="${folder#/}"
-  remote_root="${remote}:"
-  if [ -n "${folder}" ]; then
-    remote_root="${remote_root}${folder%/}"
-  fi
+  remote_root="$(rclone_remote_root "${remote}" "${folder}")"
   offsite_dir="${remote_root%/}/${TS}"
 
   IFS=',' read -r -a OFFSITE_EXCLUDE_PATTERNS <<< "${BACKUP_OFFSITE_EXCLUDE_FILES}"
@@ -219,6 +230,58 @@ apply_retention() {
   find "${target_root}" -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +"${BACKUP_RETENTION_DAYS}" -print -exec rm -rf {} + || true
 }
 
+apply_rclone_retention() {
+  local remote="${BACKUP_RCLONE_REMOTE:-}"
+  local folder="${BACKUP_RCLONE_FOLDER:-}"
+  local retention_days="${BACKUP_RCLONE_RETENTION_DAYS:-0}"
+  local remote_root dirs cutoff_epoch dir date_part time_part dir_epoch remote_dir
+
+  [ -n "${remote}" ] || return 0
+
+  if ! [[ "${retention_days}" =~ ^[0-9]+$ ]]; then
+    warn "BACKUP_RCLONE_RETENTION_DAYS is not numeric (${retention_days}), rclone retention skipped"
+    return 0
+  fi
+
+  if [ "${retention_days}" -eq 0 ]; then
+    log "Rclone retention disabled (BACKUP_RCLONE_RETENTION_DAYS=0)"
+    return 0
+  fi
+
+  command -v rclone >/dev/null 2>&1 || die "rclone is required when BACKUP_RCLONE_REMOTE is set"
+
+  remote_root="$(rclone_remote_root "${remote}" "${folder}")"
+  cutoff_epoch="$(date -u -d "${retention_days} days ago" +%s)" || {
+    warn "Unable to calculate rclone retention cutoff, rclone retention skipped"
+    return 0
+  }
+
+  if ! dirs="$(rclone lsf --dirs-only "${remote_root}")"; then
+    warn "Unable to list rclone backup root (${remote_root}), rclone retention skipped"
+    return 0
+  fi
+
+  while IFS= read -r dir; do
+    dir="${dir%/}"
+    [ -n "${dir}" ] || continue
+    [[ "${dir}" == 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9] ]] || continue
+
+    date_part="${dir%%_*}"
+    time_part="${dir#*_}"
+    time_part="${time_part//-/:}"
+    if ! dir_epoch="$(date -u -d "${date_part} ${time_part} UTC" +%s 2>/dev/null)"; then
+      warn "Unable to parse rclone backup timestamp (${dir}), skip"
+      continue
+    fi
+
+    if [ "${dir_epoch}" -lt "${cutoff_epoch}" ]; then
+      remote_dir="${remote_root%/}/${dir}"
+      log "Rclone retention purge: ${remote_dir}"
+      rclone purge "${remote_dir}" || warn "Failed to purge rclone backup dir: ${remote_dir}"
+    fi
+  done <<< "${dirs}"
+}
+
 main() {
   load_env "$@"
   require_vars
@@ -226,6 +289,7 @@ main() {
   BACKUP_ROOT="${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
   BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
   BACKUP_RCLONE_FOLDER="${BACKUP_RCLONE_FOLDER:-}"
+  BACKUP_RCLONE_RETENTION_DAYS="${BACKUP_RCLONE_RETENTION_DAYS:-0}"
   BACKUP_OFFSITE_EXCLUDE_FILES="${BACKUP_OFFSITE_EXCLUDE_FILES:-koha_data.tar.gz}"
   BACKUP_TMP_ROOT="${BACKUP_TMP_ROOT:-/tmp}"
   BACKUP_INCLUDE_LOGS="${BACKUP_INCLUDE_LOGS:-true}"
@@ -238,7 +302,8 @@ main() {
     log "Would dump DB '${DB_NAME}' from service db"
     log "Would archive: ${VOL_KOHA_CONF}, ${VOL_KOHA_DATA}, logs=${BACKUP_INCLUDE_LOGS}, es=${BACKUP_INCLUDE_ES_DATA}"
     log "Would write backup under: ${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
-    log "Would apply retention: ${BACKUP_RETENTION_DAYS} days"
+    log "Would apply local retention: ${BACKUP_RETENTION_DAYS} days"
+    log "Would apply rclone retention: ${BACKUP_RCLONE_RETENTION_DAYS} days"
     exit 0
   fi
 
@@ -302,6 +367,7 @@ main() {
 
   copy_lightweight_offsite
   apply_retention "${BACKUP_ROOT}"
+  apply_rclone_retention
 
   log "Backup completed: ${FINAL_DIR}"
   ls -lh "${FINAL_DIR}"

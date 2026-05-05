@@ -208,7 +208,8 @@ bash -lc 'source scripts/lib/autonomous-env.sh; load_autonomous_env "$PWD" dev; 
 - Створює повний Koha backup set: MariaDB dump, bind-volume архіви, PITR metadata/binlogs, checksums і manifest.
 - Основні артефакти: `${DB_NAME}.sql.gz`, `koha_config.tar.gz`, `koha_data.tar.gz`, `mariadb_binlogs.tar.gz`, `SHA256SUMS`, `backup_metadata.env`, `backup_manifest.tsv`.
 - Logs і Elasticsearch data архівуються опційно через `BACKUP_INCLUDE_LOGS` / `BACKUP_INCLUDE_ES_DATA`.
-- Підтримує lightweight offsite copy через `BACKUP_OFFSITE_PATH` і retention через `BACKUP_RETENTION_DAYS`.
+- Підтримує lightweight offsite copy через `BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER`.
+- Локальний retention керується `BACKUP_RETENTION_DAYS`, Google Drive/rclone retention — окремо через `BACKUP_RCLONE_RETENTION_DAYS`.
 
 #### Manual execution
 ```bash

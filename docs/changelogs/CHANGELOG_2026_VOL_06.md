@@ -310,3 +310,24 @@
   - `bash -n scripts/init-volumes.sh` - OK;
   - `shellcheck scripts/init-volumes.sh` - OK;
   - `bash scripts/verify-env.sh --example-only` - OK.
+
+### 24) `backup.sh`: окремий rclone retention для Google Drive backup-копій
+
+- Оновлено:
+  - [/home/pinokew/Koha/koha-deploy/scripts/backup.sh](/home/pinokew/Koha/koha-deploy/scripts/backup.sh)
+  - [/home/pinokew/Koha/koha-deploy/scripts/verify-env.sh](/home/pinokew/Koha/koha-deploy/scripts/verify-env.sh)
+  - [/home/pinokew/Koha/koha-deploy/.env.example](/home/pinokew/Koha/koha-deploy/.env.example)
+  - [/home/pinokew/Koha/koha-deploy/docs/RUNBOOK_DR.md](/home/pinokew/Koha/koha-deploy/docs/RUNBOOK_DR.md)
+  - [/home/pinokew/Koha/koha-deploy/docs/scripts_runbook.md](/home/pinokew/Koha/koha-deploy/docs/scripts_runbook.md)
+
+- Зміни:
+  - додано `BACKUP_RCLONE_RETENTION_DAYS` як окремий retention для `BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER`;
+  - локальний `BACKUP_RETENTION_DAYS` лишився окремим retention тільки для `BACKUP_PATH`;
+  - remote retention за замовчуванням вимкнений (`0`), щоб не видаляти Google Drive backup-копії без явної конфігурації;
+  - rclone retention видаляє тільки директорії backup set формату `YYYY-MM-DD_HH-MM-SS` через `rclone purge`.
+
+- Перевірено:
+  - `bash -n scripts/backup.sh scripts/verify-env.sh` - OK;
+  - `shellcheck scripts/backup.sh scripts/verify-env.sh` - OK;
+  - `bash scripts/verify-env.sh --example-only` - OK;
+  - `bash scripts/backup.sh --env dev --dry-run` - OK (`BACKUP_RCLONE_RETENTION_DAYS=0`, remote retention disabled).

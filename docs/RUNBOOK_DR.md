@@ -31,6 +31,7 @@
 - `BACKUP_PATH=/var/backups/koha` (повний backup set)
 - `BACKUP_RCLONE_REMOTE=koha-backups` (назва remote з `rclone config`)
 - `BACKUP_RCLONE_FOLDER=KDV_Backups/Koha` (папка всередині remote; можна залишити порожньою для кореня remote)
+- `BACKUP_RCLONE_RETENTION_DAYS=0` (окремий retention для Google Drive/rclone; `0` = вимкнено)
 - `BACKUP_OFFSITE_EXCLUDE_FILES=koha_data.tar.gz` (виключення важкого медіа-архіву; список через кому)
 - `DB_LOG_BIN_BASENAME=mysql-bin`
 - `DB_BINLOG_FORMAT=ROW`
