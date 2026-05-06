@@ -116,3 +116,29 @@
   - `ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha scripts/bootstrap-live-configs.sh --env-file .env.example --module search-prefs --no-restart` - OK;
   - SQL і Koha Perl context бачать `SearchEngine=Elasticsearch`;
   - ES guard після патчу: `Biblios: DB=3, ES=3; OK`, `koha-es-indexer --restart library` - OK.
+
+### 29) Bootstrap: додано IaC-патч `RESTBasicAuth`
+
+- Контекст:
+  - `RESTBasicAuth` має бути керованим через env/bootstrap, а не вручну в UI;
+  - потрібен явний syspref-patch для стану "Увімкнено".
+
+- Оновлено:
+  - `scripts/patch/patch-koha-sysprefs-api.sh`
+  - `scripts/bootstrap-live-configs.sh`
+  - `.env.example`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано bootstrap-модуль `api-prefs`;
+  - модуль ставить `systempreferences.RESTBasicAuth` з `KOHA_REST_BASIC_AUTH`;
+  - default у `.env.example`: `KOHA_REST_BASIC_AUTH=1`;
+  - після direct SQL update виконується Koha cache flush через `Koha::Caches`;
+  - `api-prefs` додано в `MODULE_ORDER` після `search-prefs`.
+
+- Перевірено:
+  - `bash -n scripts/patch/patch-koha-sysprefs-api.sh scripts/bootstrap-live-configs.sh` - OK;
+  - `shellcheck scripts/patch/patch-koha-sysprefs-api.sh scripts/bootstrap-live-configs.sh` - OK;
+  - `scripts/bootstrap-live-configs.sh --list-modules` показує `api-prefs`;
+  - `ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha scripts/bootstrap-live-configs.sh --env-file .env.example --module api-prefs --no-restart` - OK;
+  - runtime verify: `RESTBasicAuth=1`, Koha cache flush - OK.

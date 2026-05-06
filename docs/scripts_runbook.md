@@ -172,6 +172,7 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 
 Файли:
 - `scripts/patch/patch-koha-sysprefs-search.sh`
+- `scripts/patch/patch-koha-sysprefs-api.sh`
 - `scripts/patch/patch-koha-sysprefs-domain.sh`
 - `scripts/patch/patch-koha-sysprefs-oidc.sh`
 - `scripts/patch/patch-koha-sysprefs-opac-matomo.sh`
@@ -180,11 +181,13 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 #### Бізнес-логіка
 - Оновлюють Koha DB state з env як IaC.
 - `search-prefs` керує `systempreferences.SearchEngine` через `KOHA_SEARCH_ENGINE` або `USE_ELASTICSEARCH` і після direct SQL update чистить Koha cache.
-- DB exec іде через `docker_runtime_exec db ...`.
+- `api-prefs` керує `systempreferences.RESTBasicAuth` через `KOHA_REST_BASIC_AUTH` і після direct SQL update чистить Koha cache.
+- DB exec іде через `docker_runtime_exec db ...` або штатний `koha-mysql` через `docker_runtime_exec koha ...`.
 
 #### Manual execution
 ```bash
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module search-prefs --dry-run
+ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module api-prefs --dry-run
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module domain-prefs --dry-run
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/patch/patch-koha-sysprefs-oidc.sh --discover
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/patch/patch-koha-identity-provider.sh --verify

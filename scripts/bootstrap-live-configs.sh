@@ -21,7 +21,7 @@ Usage: ./scripts/bootstrap-live-configs.sh [options]
 
 Module selection:
   --all                 Run all modules (default if none selected)
-  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,search-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
+  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
   --module NAME         Repeatable module selector (same names as above)
   --list-modules        Print available modules and exit
 
@@ -39,7 +39,7 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(db timezone trusted-proxies memcached message-broker smtp search-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
+MODULE_ORDER=(db timezone trusted-proxies memcached message-broker smtp search-prefs api-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
 declare -A MODULE_SCRIPT=(
   [db]="patch-koha-conf-xml-db.sh"
   [timezone]="patch-koha-conf-xml-timezone.sh"
@@ -48,6 +48,7 @@ declare -A MODULE_SCRIPT=(
   [message-broker]="patch-koha-conf-xml-message-broker.sh"
   [smtp]="patch-koha-conf-xml-smtp.sh"
   [search-prefs]="patch-koha-sysprefs-search.sh"
+  [api-prefs]="patch-koha-sysprefs-api.sh"
   [domain-prefs]="patch-koha-sysprefs-domain.sh"
   [identity-provider]="patch-koha-identity-provider.sh"
   [oidc-prefs]="patch-koha-sysprefs-oidc.sh"
