@@ -291,6 +291,8 @@ run_post_deploy_scripts() {
 
   wait_for_swarm_container koha "${wait_timeout}"
 
+  run_script "Elasticsearch index guard" "${SCRIPT_DIR}/koha-elasticsearch-index-guard.sh" --env-file "${ENV_FILE}" --wait-timeout "${wait_timeout}"
+
   run_script "password prefs lockdown" "${SCRIPT_DIR}/koha-lockdown-password-prefs.sh" --env-file "${ENV_FILE}"
 }
 

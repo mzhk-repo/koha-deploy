@@ -60,3 +60,59 @@
   - `docker service update --force koha_koha` завершився convergence;
   - `koha_koha` перейшов у `1/1`, container health: `healthy`;
   - HTTP-перевірка всередині container: `wget -q --spider http://localhost:${KOHA_INTRANET_PORT:-8081}` - OK.
+
+### 27) Swarm deploy: додано smart Elasticsearch index guard для Koha cataloguing
+
+- Контекст:
+  - після чистого/порожнього Elasticsearch volume Koha працювала з `SearchEngine=Elasticsearch`, але індекси `koha_library_biblios` і `koha_library_authorities` були відсутні;
+  - `cataloguing/addbiblio.pl` падав з HTTP 500 до вставки запису в БД через `index_not_found_exception`.
+
+- Оновлено:
+  - `scripts/koha-elasticsearch-index-guard.sh`
+  - `scripts/deploy-orchestrator-swarm.sh`
+  - `.env.example`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано окремий deploy-adjacent скрипт `koha-elasticsearch-index-guard.sh`;
+  - orchestrator запускає guard після `bootstrap-live-configs.sh` і повторного очікування running `koha`, перед password lockdown;
+  - guard пропускається, якщо `USE_ELASTICSEARCH=false` або Koha syspref `SearchEngine` не дорівнює `Elasticsearch`;
+  - якщо індекси відсутні, виконується `koha-elasticsearch --rebuild --reset -v ${KOHA_INSTANCE}`;
+  - якщо індекси існують, guard порівнює DB counts (`biblio`, `auth_header`) з ES `_count`;
+  - default policy: `ORCHESTRATOR_ES_GUARD=smart`, `ORCHESTRATOR_ES_REINDEX_ON_MISMATCH=auto`, `ORCHESTRATOR_ES_MISMATCH_THRESHOLD_PERCENT=5`;
+  - при суттєвому відставанні ES від DB запускається `koha-elasticsearch --rebuild -v ${KOHA_INSTANCE}`, при рівних counts reindex не виконується;
+  - після guard-перевірок за замовчуванням виконується `koha-es-indexer --restart ${KOHA_INSTANCE}` (`ORCHESTRATOR_ES_INDEXER_RESTART=true`), щоб auto-indexing daemon перечитав актуальний `SearchEngine` після bootstrap.
+
+- Перевірено:
+  - `bash -n scripts/koha-elasticsearch-index-guard.sh scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `shellcheck scripts/koha-elasticsearch-index-guard.sh scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `scripts/koha-elasticsearch-index-guard.sh --help` - OK;
+  - `ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha scripts/koha-elasticsearch-index-guard.sh --env-file .env.example --dry-run --wait-timeout 30` - OK, dry-run визначив `DB=1, ES=0` для biblios і запланував reindex без виконання.
+  - runtime diagnosis: `koha-es-indexer` до restart бачив stale Zebra context (`Not using Elasticsearch`, `Koha::SearchEngine::Zebra::Indexer`), після `koha-es-indexer --restart library` ES `koha_library_biblios` зріс з `0` до `2` при `biblio_count=2`.
+
+### 28) Bootstrap: додано IaC-патч `SearchEngine=Elasticsearch`
+
+- Контекст:
+  - `USE_ELASTICSEARCH=true` був у env/config, але bootstrap не патчив Koha `systempreferences.SearchEngine`;
+  - через це пошуковий рушій доводилось перемикати вручну в UI;
+  - ручне перемикання після старту сервісів могло залишити `koha-es-indexer` у stale Zebra context.
+
+- Оновлено:
+  - `scripts/patch/patch-koha-sysprefs-search.sh`
+  - `scripts/bootstrap-live-configs.sh`
+  - `.env.example`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано bootstrap-модуль `search-prefs`;
+  - модуль ставить `systempreferences.SearchEngine` з `KOHA_SEARCH_ENGINE` або автоматично з `USE_ELASTICSEARCH` (`true` -> `Elasticsearch`, false -> `Zebra`);
+  - після direct SQL update виконується Koha cache flush через `Koha::Caches`;
+  - `search-prefs` додано в `MODULE_ORDER` перед іншими DB/systempreferences патчами.
+
+- Перевірено:
+  - `bash -n scripts/patch/patch-koha-sysprefs-search.sh scripts/bootstrap-live-configs.sh scripts/koha-elasticsearch-index-guard.sh` - OK;
+  - `shellcheck scripts/patch/patch-koha-sysprefs-search.sh scripts/bootstrap-live-configs.sh scripts/koha-elasticsearch-index-guard.sh` - OK;
+  - `scripts/bootstrap-live-configs.sh --list-modules` показує `search-prefs`;
+  - `ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha scripts/bootstrap-live-configs.sh --env-file .env.example --module search-prefs --no-restart` - OK;
+  - SQL і Koha Perl context бачать `SearchEngine=Elasticsearch`;
+  - ES guard після патчу: `Biblios: DB=3, ES=3; OK`, `koha-es-indexer --restart library` - OK.

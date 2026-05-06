@@ -55,9 +55,9 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 #### Бізнес-логіка
 - Основний Swarm orchestrator для CI/CD.
-- Порядок фаз: validation -> env resolution -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/lockdown.
+- Порядок фаз: validation -> env resolution -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/index guard/lockdown.
 - Post-deploy чекає running containers `${STACK_NAME}_db` і `${STACK_NAME}_koha`.
-- `bootstrap-live-configs.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
+- `bootstrap-live-configs.sh`, `koha-elasticsearch-index-guard.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
 
 #### Manual execution
 ```bash
@@ -112,6 +112,23 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --all
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modules smtp,verify --no-restart
 ```
 
+### `scripts/koha-elasticsearch-index-guard.sh`
+
+#### Бізнес-логіка
+- Перевіряє, що Koha працює з `SearchEngine=Elasticsearch`.
+- Автоматично створює відсутні індекси `koha_${KOHA_INSTANCE}_biblios` і `koha_${KOHA_INSTANCE}_authorities` через `koha-elasticsearch --rebuild --reset`.
+- Якщо індекси існують, порівнює count у DB (`biblio`, `auth_header`) з Elasticsearch `_count`.
+- За замовчуванням `ORCHESTRATOR_ES_REINDEX_ON_MISMATCH=auto`: reindex запускається тільки коли ES суттєво відстає від DB за `ORCHESTRATOR_ES_MISMATCH_THRESHOLD_PERCENT`.
+- Після перевірок перезапускає `koha-es-indexer`, щоб daemon перечитав актуальний `SearchEngine` і не залишався у stale Zebra context після bootstrap.
+- Runtime exec іде через `docker_runtime_exec`, тому підтримує Swarm і Compose fallback.
+
+#### Manual execution
+```bash
+ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha \
+ORCHESTRATOR_ENV_FILE="${ENV_TMP}" \
+bash scripts/koha-elasticsearch-index-guard.sh --dry-run
+```
+
 ### `scripts/koha-lockdown-password-prefs.sh`
 
 #### Бізнес-логіка
@@ -154,6 +171,7 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 ### DB/systempreferences modules
 
 Файли:
+- `scripts/patch/patch-koha-sysprefs-search.sh`
 - `scripts/patch/patch-koha-sysprefs-domain.sh`
 - `scripts/patch/patch-koha-sysprefs-oidc.sh`
 - `scripts/patch/patch-koha-sysprefs-opac-matomo.sh`
@@ -161,10 +179,12 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 
 #### Бізнес-логіка
 - Оновлюють Koha DB state з env як IaC.
+- `search-prefs` керує `systempreferences.SearchEngine` через `KOHA_SEARCH_ENGINE` або `USE_ELASTICSEARCH` і після direct SQL update чистить Koha cache.
 - DB exec іде через `docker_runtime_exec db ...`.
 
 #### Manual execution
 ```bash
+ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module search-prefs --dry-run
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --module domain-prefs --dry-run
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/patch/patch-koha-sysprefs-oidc.sh --discover
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/patch/patch-koha-identity-provider.sh --verify
