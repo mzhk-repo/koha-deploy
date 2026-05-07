@@ -55,7 +55,8 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 #### Бізнес-логіка
 - Основний Swarm orchestrator для CI/CD.
-- Порядок фаз: validation -> env resolution -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/index guard/lockdown.
+- Порядок фаз: validation -> env resolution -> versioned runtime env secret -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/index guard/lockdown.
+- Перед render stack manifest створює Docker secrets з hash-based назвами (`KOHA_APP_ENV_PAYLOAD_SECRET_NAME`, `KOHA_DB_PASSWORD_SECRET_NAME`, `KOHA_DB_ROOT_PASSWORD_SECRET_NAME`, `RABBITMQ_PASSWORD_SECRET_NAME`), щоб зміни в `env.<env>.enc` давали новий service spec і rolling update.
 - Post-deploy чекає running containers `${STACK_NAME}_db` і `${STACK_NAME}_koha`.
 - `bootstrap-live-configs.sh`, `koha-elasticsearch-index-guard.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
 
@@ -80,6 +81,20 @@ shred -u "${ENV_TMP}" 2>/dev/null || rm -f "${ENV_TMP}"
 #### No-op smoke
 ```bash
 ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh
+```
+
+### `scripts/render-versioned-env-secret.sh`
+
+#### Бізнес-логіка
+- Створює immutable Docker secrets для runtime env payload і окремих Swarm secrets (`DB_PASS`, `DB_ROOT_PASS`, `RABBITMQ_PASS`).
+- Назва кожного secret включає hash payload/значення, тому зміна значень у розшифрованому `env.<env>.enc` створює нову назву secret.
+- Generated `*_SECRET_NAME` не входять у env payload hash, щоб уникнути нескінченної зміни hash між деплоями.
+- У Swarm orchestrator generated secret names дописуються тільки в тимчасовий env-файл перед `docker compose config`.
+
+#### Manual execution
+```bash
+ORCHESTRATOR_ENV_FILE="${ENV_TMP}" \
+  bash scripts/render-versioned-env-secret.sh --write-env-file "${ENV_TMP}"
 ```
 
 ### `scripts/init-volumes.sh`

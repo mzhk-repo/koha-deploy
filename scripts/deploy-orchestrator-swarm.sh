@@ -70,6 +70,12 @@ run_pre_deploy_adjacent_scripts() {
   run_script "volume initialization" "${SCRIPT_DIR}/init-volumes.sh" --env-file "${ENV_FILE}"
 }
 
+render_versioned_env_secret() {
+  run_script "versioned runtime env secret" "${SCRIPT_DIR}/render-versioned-env-secret.sh" \
+    --env-file "${ENV_FILE}" \
+    --write-env-file "${ENV_FILE}" >/dev/null
+}
+
 runtime_env_has_key() {
   local env_file="$1"
   local expected_key="$2"
@@ -380,6 +386,7 @@ deploy_swarm() {
   fi
 
   prepare_runtime_env_file
+  render_versioned_env_secret
   run_ansible_secrets_if_configured
 
   run_pre_deploy_adjacent_scripts

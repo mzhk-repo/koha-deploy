@@ -142,3 +142,43 @@
   - `scripts/bootstrap-live-configs.sh --list-modules` показує `api-prefs`;
   - `ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha scripts/bootstrap-live-configs.sh --env-file .env.example --module api-prefs --no-restart` - OK;
   - runtime verify: `RESTBasicAuth=1`, Koha cache flush - OK.
+
+### 30) Swarm deploy: додано versioned runtime env payload secret
+
+- Контекст:
+  - Docker secrets immutable, тому повторний deploy з тією самою назвою `app_env_payload` не гарантував підхоплення нових значень із `env.<env>.enc`;
+  - потрібно, щоб новий env payload створював нову назву Docker secret, новий service spec і rolling update.
+
+- Оновлено:
+  - `scripts/render-versioned-env-secret.sh`
+  - `scripts/deploy-orchestrator-swarm.sh`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано `render-versioned-env-secret.sh`, який створює Docker secret з hash-based назвою payload;
+  - `deploy-orchestrator-swarm.sh` запускає render secret після підготовки тимчасового env-файлу і до `docker compose config`;
+  - `KOHA_APP_ENV_PAYLOAD_SECRET_NAME` дописується в тимчасовий env-файл перед render manifest;
+  - `KOHA_APP_ENV_PAYLOAD_SECRET_NAME` виключено з hash/payload, щоб уникнути нескінченної зміни hash між деплоями.
+
+### 31) Swarm deploy: додано versioned external secrets для DB/RabbitMQ
+
+- Контекст:
+  - `DB_PASS`, `DB_ROOT_PASS` і `RABBITMQ_PASS` у Swarm використовуються як окремі external Docker secrets;
+  - Docker secrets immutable, тому зміна цих значень у `env.<env>.enc` також має створювати нову назву secret і новий service spec.
+
+- Оновлено:
+  - `scripts/render-versioned-env-secret.sh`
+  - `docs/scripts_runbook.md`
+  - `docs/scrypts_refactoring.md`
+
+- Зміни:
+  - `render-versioned-env-secret.sh` тепер створює versioned secrets для `DB_PASS`, `DB_ROOT_PASS`, `RABBITMQ_PASS`;
+  - generated names дописуються в тимчасовий env-файл як `KOHA_DB_PASSWORD_SECRET_NAME`, `KOHA_DB_ROOT_PASSWORD_SECRET_NAME`, `RABBITMQ_PASSWORD_SECRET_NAME`;
+  - generated `*_SECRET_NAME` виключено з env payload hash, щоб службові назви не спричиняли зайві rolling updates.
+
+- Перевірено:
+  - `bash -n scripts/render-versioned-env-secret.sh scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `shellcheck scripts/render-versioned-env-secret.sh scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` - OK;
+  - `git diff --check` - OK;
+  - real Docker smoke на копії `.env.example`: створено/перевикористано versioned secrets для env payload, DB password, DB root password і RabbitMQ password; усі generated names підставились у `docker compose config`.
