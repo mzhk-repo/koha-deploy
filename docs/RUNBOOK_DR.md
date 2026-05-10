@@ -68,7 +68,27 @@
 - валідність SQL та `.tar.gz` артефактів
 - наявність обов'язкового SQL дампу
 
-## 6. Full restore (DB + файли + reindex)
+## 6. Restore smoke test
+
+Безпечна перевірка restore без зміни production Koha DB:
+
+```bash
+./scripts/test-restore.sh --env prod
+# або для конкретного backup set:
+./scripts/test-restore.sh --env prod --source /path/to/backup_dir
+```
+
+Скрипт піднімає тимчасовий MariaDB container, імпортує SQL dump у тимчасову БД і видаляє контейнер/тимчасові дані після перевірки.
+
+Textfile metrics:
+
+- `koha_restore_smoke_last_run_timestamp_seconds`
+- `koha_restore_smoke_last_success_timestamp_seconds`
+- `koha_restore_smoke_last_status`
+
+`--dry-run` не оновлює freshness metrics.
+
+## 7. Full restore (DB + файли + reindex)
 
 ```bash
 ./scripts/restore.sh --source /path/to/backup_dir --yes
@@ -86,7 +106,7 @@
 6. `koha-elasticsearch --rebuild`
 7. verify (DB count + ES count)
 
-## 7. PITR restore (до timestamp)
+## 8. PITR restore (до timestamp)
 
 Приклад:
 
@@ -103,7 +123,7 @@
 - у backup set має бути `mariadb_binlogs.tar.gz`
 - бажано `pitr_master_status.env` для коректного старту реплею binlog
 
-## 8. Післяаварійна перевірка
+## 9. Післяаварійна перевірка
 
 Перевірити:
 
@@ -121,22 +141,23 @@ docker compose exec -T es sh -lc 'curl -s http://localhost:9200/_cat/indices?v |
 docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
 ```
 
-## 9. Restore-test (щомісячно)
+## 10. Restore-test (щомісячно)
 
 Мінімальний протокол:
 
 1. Взяти останній backup set.
 2. `scripts/restore.sh --env dev --source <backup_dir> --dry-run`.
-3. `scripts/restore.sh --env dev --source <backup_dir> --yes` у тестовому середовищі.
-4. Зафіксувати фактичні:
+3. `scripts/test-restore.sh --env prod --source <backup_dir>` для smoke restore у тимчасову БД без зміни production.
+4. `scripts/restore.sh --env dev --source <backup_dir> --yes` у тестовому середовищі.
+5. Зафіксувати фактичні:
    - старт restore
    - час готовності сервісів
    - час завершення reindex
    - RTO
-5. Перевірити доступність каталогу, авторизацію, ключові workflows.
-6. Занести результат у журнал інцидентів/операцій.
+6. Перевірити доступність каталогу, авторизацію, ключові workflows.
+7. Занести результат у журнал інцидентів/операцій.
 
-## 10. Типові збої і дії
+## 11. Типові збої і дії
 
 - ES rebuild впав на `icu_folding`:
   - перевірити `analysis-icu` у ES (`elasticsearch-plugin list`)

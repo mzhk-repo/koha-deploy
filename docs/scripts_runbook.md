@@ -248,11 +248,36 @@ bash -lc 'source scripts/lib/autonomous-env.sh; load_autonomous_env "$PWD" dev; 
 - Logs і Elasticsearch data архівуються опційно через `BACKUP_INCLUDE_LOGS` / `BACKUP_INCLUDE_ES_DATA`.
 - Підтримує lightweight offsite copy через `BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER`.
 - Локальний retention керується `BACKUP_RETENTION_DAYS`, Google Drive/rclone retention — окремо через `BACKUP_RCLONE_RETENTION_DAYS`.
+- Пише textfile collector метрики у `${NODE_EXPORTER_TEXTFILE_DIR}/${BACKUP_METRICS_FILE}`:
+  - `koha_backup_last_run_timestamp_seconds`
+  - `koha_backup_last_success_timestamp_seconds`
+  - `koha_backup_last_status`
+- `--dry-run` не оновлює freshness metrics.
 
 #### Manual execution
 ```bash
 SERVER_ENV=dev bash scripts/backup.sh
 bash scripts/backup.sh --env prod
+```
+
+### `scripts/test-restore.sh`
+
+#### Бізнес-логіка
+- Restore smoke test для backup set Koha без змін production DB.
+- Імпортує SQL dump із backup-директорії у тимчасовий MariaDB container, перевіряє кількість таблиць і прибирає контейнер/тимчасові дані після завершення.
+- Якщо `--source` не заданий, бере найсвіжішу директорію з `BACKUP_PATH`.
+- Пише textfile collector метрики у `${NODE_EXPORTER_TEXTFILE_DIR}/${RESTORE_SMOKE_METRICS_FILE}`:
+  - `koha_restore_smoke_last_run_timestamp_seconds`
+  - `koha_restore_smoke_last_success_timestamp_seconds`
+  - `koha_restore_smoke_last_status`
+- `--dry-run` не запускає restore smoke і не оновлює freshness metrics.
+
+#### Manual execution
+```bash
+bash scripts/test-restore.sh --help
+SERVER_ENV=prod bash scripts/test-restore.sh
+SERVER_ENV=prod bash scripts/test-restore.sh --source /var/backups/koha/2026-04-25_01-30-00
+SERVER_ENV=prod bash scripts/test-restore.sh --source /var/backups/koha/2026-04-25_01-30-00 --dry-run
 ```
 
 ### `scripts/restore.sh`

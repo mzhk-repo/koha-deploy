@@ -182,3 +182,30 @@
   - `ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh` - OK;
   - `git diff --check` - OK;
   - real Docker smoke на копії `.env.example`: створено/перевикористано versioned secrets для env payload, DB password, DB root password і RabbitMQ password; усі generated names підставились у `docker compose config`.
+
+### 32) Backup/restore: textfile collector metrics і restore smoke test
+
+- Контекст:
+  - monitoring stack очікує freshness metrics для Koha backup і безпечної перевірки restore;
+  - dry-run не має оновлювати freshness timestamps, щоб не маскувати відсутність реального backup/restore.
+
+- Оновлено:
+  - `scripts/backup.sh`
+  - `scripts/test-restore.sh`
+  - `.env.example`
+  - `docs/scripts_runbook.md`
+  - `docs/RUNBOOK_DR.md`
+
+- Зміни:
+  - `backup.sh` пише `koha_backup.prom` у `${NODE_EXPORTER_TEXTFILE_DIR}` з метриками `koha_backup_last_run_timestamp_seconds`, `koha_backup_last_success_timestamp_seconds`, `koha_backup_last_status`;
+  - додано окремий `scripts/test-restore.sh`, який імпортує SQL dump у тимчасовий MariaDB container і не змінює production Koha DB;
+  - restore smoke пише `koha_restore_smoke.prom` з метриками `koha_restore_smoke_last_run_timestamp_seconds`, `koha_restore_smoke_last_success_timestamp_seconds`, `koha_restore_smoke_last_status`;
+  - `.env.example` документує `NODE_EXPORTER_TEXTFILE_DIR=/data/node-exporter-textfile`, `BACKUP_METRICS_FILE=koha_backup.prom`, `RESTORE_SMOKE_METRICS_FILE=koha_restore_smoke.prom`;
+  - `--dry-run` для backup і restore smoke не оновлює freshness metrics.
+
+- Перевірено:
+  - `bash -n scripts/backup.sh scripts/restore.sh scripts/test-restore.sh` - OK;
+  - `shellcheck scripts/backup.sh scripts/test-restore.sh` - OK;
+  - `bash scripts/test-restore.sh --help` - OK;
+  - `SERVER_ENV=prod bash scripts/test-restore.sh --env prod` - OK, використано backup set `/data/backup/koha/2026-05-10_11-54-21`, SQL dump імпортовано у тимчасову MariaDB DB `koha_restore_smoke`, перевірено 277 таблиць;
+  - textfile metrics створені на host: `/data/node-exporter-textfile/koha_backup.prom`, `/data/node-exporter-textfile/koha_restore_smoke.prom`, обидва status `1`.
