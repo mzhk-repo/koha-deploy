@@ -31,7 +31,7 @@ services:
     deploy:
       labels:
         - "traefik.enable=true"
-        - "traefik.docker.network=${EXTERNAL_NETWORK}"
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
 
         - "traefik.http.routers.koha-opac.rule=Host(`${KOHA_OPAC_SERVERNAME}`)"
         - "traefik.http.routers.koha-opac.entrypoints=web"
