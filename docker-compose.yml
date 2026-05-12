@@ -28,19 +28,20 @@ services:
     networks:
       - kohanet
       - proxy-net
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${EXTERNAL_NETWORK}"
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
 
-      - "traefik.http.routers.koha-opac.rule=Host(`${KOHA_OPAC_SERVERNAME}`)"
-      - "traefik.http.routers.koha-opac.entrypoints=web"
-      - "traefik.http.routers.koha-opac.service=koha-opac"
-      - "traefik.http.services.koha-opac.loadbalancer.server.port=${KOHA_OPAC_PORT:-8080}"
+        - "traefik.http.routers.koha-opac.rule=Host(`${KOHA_OPAC_SERVERNAME}`)"
+        - "traefik.http.routers.koha-opac.entrypoints=web"
+        - "traefik.http.routers.koha-opac.service=koha-opac"
+        - "traefik.http.services.koha-opac.loadbalancer.server.port=${KOHA_OPAC_PORT:-8080}"
 
-      - "traefik.http.routers.koha-staff.rule=Host(`${KOHA_INTRANET_SERVERNAME}`)"
-      - "traefik.http.routers.koha-staff.entrypoints=web"
-      - "traefik.http.routers.koha-staff.service=koha-staff"
-      - "traefik.http.services.koha-staff.loadbalancer.server.port=${KOHA_INTRANET_PORT:-8081}"
+        - "traefik.http.routers.koha-staff.rule=Host(`${KOHA_INTRANET_SERVERNAME}`)"
+        - "traefik.http.routers.koha-staff.entrypoints=web"
+        - "traefik.http.routers.koha-staff.service=koha-staff"
+        - "traefik.http.services.koha-staff.loadbalancer.server.port=${KOHA_INTRANET_PORT:-8081}"
     cap_add:
       - DAC_READ_SEARCH
       - SYS_NICE

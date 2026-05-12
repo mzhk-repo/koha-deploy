@@ -1,6 +1,9 @@
 # Ігнорувати файл з паролями
 .env
 *.decrypted~env.*.enc
+.koha.env.*
+.koha.stack.raw.*.yml
+.koha.stack.deploy.*.yml
 
 # Ігнорувати бекапи бази даних
 *.sql
@@ -13,6 +16,5 @@ files/docker/templates
 archive
 NEW_CHAT_START_HERE.md
 AGENTS.md
-IntranetUserJS.js
 docs/hello-world.md
 systemd

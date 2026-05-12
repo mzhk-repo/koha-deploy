@@ -6,8 +6,10 @@
 # - VOL_DB_PATH        -> /var/lib/mysql
 # - VOL_ES_PATH        -> /usr/share/elasticsearch/data
 # - VOL_KOHA_CONF      -> /etc/koha/sites
+# - VOL_KOHA_CONF/KOHA_INSTANCE -> /etc/koha/sites/default
 # - VOL_KOHA_DATA      -> /var/lib/koha
 # - VOL_KOHA_LOGS      -> /var/log/koha
+# - BACKUP_PATH        -> local backup root
 #
 # Використання:
 #   ./scripts/init-volumes.sh
@@ -59,6 +61,8 @@ load_orchestrator_env_file "${ENV_FILE}"
 : "${VOL_KOHA_CONF:?VOL_KOHA_CONF is required in .env}"
 : "${VOL_KOHA_DATA:?VOL_KOHA_DATA is required in .env}"
 : "${VOL_KOHA_LOGS:?VOL_KOHA_LOGS is required in .env}"
+: "${BACKUP_PATH:?BACKUP_PATH is required in .env}"
+: "${KOHA_INSTANCE:?KOHA_INSTANCE is required in .env}"
 
 # --- 3) UID/GID mapping (overrideable via .env) ---
 # MariaDB офіційно зазвичай mysql (999:999) у Debian-based образах.
@@ -72,6 +76,8 @@ KOHA_UID="${KOHA_UID:-1000}"
 KOHA_GID="${KOHA_GID:-1000}"
 KOHA_CONF_UID="${KOHA_CONF_UID:-0}"
 KOHA_CONF_GID="${KOHA_CONF_GID:-1000}"
+BACKUP_UID="${BACKUP_UID:-$(id -u)}"
+BACKUP_GID="${BACKUP_GID:-$(id -g)}"
 
 if [[ "${USE_ELASTICSEARCH:-true}" =~ ^([Ff][Aa][Ll][Ss][Ee]|0|no|NO)$ ]]; then
   SKIP_ES=true
@@ -99,16 +105,20 @@ guard_path() {
 
 VOL_DB_PATH="$(abspath "$VOL_DB_PATH")"
 VOL_KOHA_CONF="$(abspath "$VOL_KOHA_CONF")"
+VOL_KOHA_INSTANCE_CONF="$(abspath "${VOL_KOHA_CONF}/${KOHA_INSTANCE}")"
 VOL_KOHA_DATA="$(abspath "$VOL_KOHA_DATA")"
 VOL_KOHA_LOGS="$(abspath "$VOL_KOHA_LOGS")"
+BACKUP_PATH="$(abspath "$BACKUP_PATH")"
 if ! $SKIP_ES; then
   VOL_ES_PATH="$(abspath "$VOL_ES_PATH")"
 fi
 
 guard_path "$VOL_DB_PATH"
 guard_path "$VOL_KOHA_CONF"
+guard_path "$VOL_KOHA_INSTANCE_CONF"
 guard_path "$VOL_KOHA_DATA"
 guard_path "$VOL_KOHA_LOGS"
+guard_path "$BACKUP_PATH"
 if ! $SKIP_ES; then
   guard_path "$VOL_ES_PATH"
 fi
@@ -236,6 +246,28 @@ fix_modes_path() {
   esac
 }
 
+set_host_user_acl() {
+  local path="$1"
+  local user_id="${INIT_VOLUMES_HOST_ACL_UID:-$(id -u)}"
+
+  command -v setfacl >/dev/null 2>&1 || return 0
+
+  case "$PRIV_MODE" in
+    root)
+      setfacl -R -m "u:${user_id}:rwX" "$path"
+      setfacl -R -d -m "u:${user_id}:rwX" "$path"
+      ;;
+    sudo)
+      sudo -n setfacl -R -m "u:${user_id}:rwX" "$path"
+      sudo -n setfacl -R -d -m "u:${user_id}:rwX" "$path"
+      ;;
+    docker)
+      # Docker helper can create/chown paths, but ACL tooling is host-specific.
+      # If host ACL access is needed, run this script as root or with passwordless sudo.
+      ;;
+  esac
+}
+
 case "$PRIV_MODE" in
   root) echo "==> Privileged mode: root" ;;
   sudo) echo "==> Privileged mode: passwordless sudo" ;;
@@ -246,8 +278,10 @@ esac
 echo "==> Creating volume directories..."
 ensure_dir "$VOL_DB_PATH"
 ensure_dir "$VOL_KOHA_CONF"
+ensure_dir "$VOL_KOHA_INSTANCE_CONF"
 ensure_dir "$VOL_KOHA_DATA"
 ensure_dir "$VOL_KOHA_LOGS"
+ensure_dir "$BACKUP_PATH"
 if ! $SKIP_ES; then
   ensure_dir "$VOL_ES_PATH"
 fi
@@ -268,12 +302,18 @@ fi
 echo " -> Koha config (${KOHA_CONF_UID}:${KOHA_CONF_GID})"
 chown_recursive "$KOHA_CONF_UID" "$KOHA_CONF_GID" "$VOL_KOHA_CONF"
 chmod_path 2775 "$VOL_KOHA_CONF"
+chmod_path 2775 "$VOL_KOHA_INSTANCE_CONF"
+set_host_user_acl "$VOL_KOHA_CONF"
 
 echo " -> Koha data/logs (${KOHA_UID}:${KOHA_GID})"
 chown_recursive "$KOHA_UID" "$KOHA_GID" "$VOL_KOHA_DATA"
 chown_recursive "$KOHA_UID" "$KOHA_GID" "$VOL_KOHA_LOGS"
 chmod_path 775 "$VOL_KOHA_DATA"
 chmod_path 775 "$VOL_KOHA_LOGS"
+
+echo " -> Backup root (${BACKUP_UID}:${BACKUP_GID})"
+chown_recursive "$BACKUP_UID" "$BACKUP_GID" "$BACKUP_PATH"
+chmod_path 750 "$BACKUP_PATH"
 
 # --- 8) Optional: fix existing perms (remove 777 etc.) ---
 if $FIX_EXISTING; then
@@ -293,11 +333,14 @@ if $FIX_EXISTING; then
   echo " -> Fixing Koha data/logs modes (dirs=775, files=664)"
   fix_modes_path "$VOL_KOHA_DATA" 775 664
   fix_modes_path "$VOL_KOHA_LOGS" 775 664
+
+  echo " -> Fixing backup root modes (dirs=750, files=640)"
+  fix_modes_path "$BACKUP_PATH" 750 640
 fi
 
 echo "==> Done! Volumes are ready."
 if $SKIP_ES; then
-  ls -ld "$VOL_DB_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS"
+  ls -ld "$VOL_DB_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_INSTANCE_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS" "$BACKUP_PATH"
 else
-  ls -ld "$VOL_DB_PATH" "$VOL_ES_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS"
+  ls -ld "$VOL_DB_PATH" "$VOL_ES_PATH" "$VOL_KOHA_CONF" "$VOL_KOHA_INSTANCE_CONF" "$VOL_KOHA_DATA" "$VOL_KOHA_LOGS" "$BACKUP_PATH"
 fi

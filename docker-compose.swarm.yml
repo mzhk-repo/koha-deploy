@@ -103,6 +103,7 @@ services:
     mem_limit: !reset null
     pids_limit: !reset null
     restart: !reset null
+    image: docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}
     entrypoint:
       - /bin/sh
       - -ec
@@ -116,6 +117,9 @@ services:
     secrets:
       - source: rabbitmq_password
         target: rabbitmq_password
+    configs:
+      - source: rabbitmq_enabled_plugins
+        target: /etc/rabbitmq/enabled_plugins
     deploy:
       replicas: 1
       restart_policy:
@@ -150,6 +154,7 @@ services:
     mem_limit: !reset null
     pids_limit: !reset null
     restart: !reset null
+    image: docker.io/memcached:${MEMCACHED_VERSION:-1.6}
     deploy:
       replicas: 1
       restart_policy:
@@ -178,3 +183,7 @@ secrets:
   rabbitmq_password:
     external: true
     name: ${RABBITMQ_PASSWORD_SECRET_NAME}
+
+configs:
+  rabbitmq_enabled_plugins:
+    file: ./rabbitmq/enabled_plugins

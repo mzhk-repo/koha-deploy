@@ -7,6 +7,12 @@ umask 027
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENVIRONMENT_ARG=""
+DRY_RUN="false"
+backup_status="0"
+run_timestamp="$(date +%s)"
+success_timestamp="0"
+emit_metrics_on_exit="1"
+WORK_DIR=""
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
@@ -49,6 +55,86 @@ require_vars() {
     fi
   done
   [ "${missing}" -eq 0 ] || die "Missing required environment variables"
+}
+
+read_env_or_default() {
+  local key="$1"
+  local default_value="$2"
+  local env_value="${!key:-}"
+
+  if [ -n "${env_value}" ]; then
+    printf '%s\n' "${env_value}"
+    return 0
+  fi
+
+  printf '%s\n' "${default_value}"
+}
+
+ensure_metrics_dir() {
+  local dir="$1"
+
+  if mkdir -p "${dir}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local parent_dir
+  local base_name
+  parent_dir="$(dirname "${dir}")"
+  base_name="$(basename "${dir}")"
+
+  if [ ! -d "${parent_dir}" ]; then
+    warn "Metrics parent directory does not exist: ${parent_dir}"
+    return 1
+  fi
+
+  docker run --rm \
+    -v "${parent_dir}:/parent" \
+    alpine:3.20 \
+    sh -c "mkdir -p '/parent/${base_name}'" >/dev/null
+}
+
+emit_backup_metrics() {
+  ensure_metrics_dir "${NODE_EXPORTER_TEXTFILE_DIR}" || {
+    warn "Failed to prepare metrics dir: ${NODE_EXPORTER_TEXTFILE_DIR}"
+    return 0
+  }
+
+  local metrics_payload
+  metrics_payload="$(cat <<EOF
+# HELP koha_backup_last_run_timestamp_seconds Unix timestamp of the last Koha backup attempt.
+# TYPE koha_backup_last_run_timestamp_seconds gauge
+koha_backup_last_run_timestamp_seconds{env="${BACKUP_METRICS_ENV_LABEL}",service="${BACKUP_METRICS_SERVICE_LABEL}"} ${run_timestamp}
+# HELP koha_backup_last_success_timestamp_seconds Unix timestamp of the last successful Koha backup.
+# TYPE koha_backup_last_success_timestamp_seconds gauge
+koha_backup_last_success_timestamp_seconds{env="${BACKUP_METRICS_ENV_LABEL}",service="${BACKUP_METRICS_SERVICE_LABEL}"} ${success_timestamp}
+# HELP koha_backup_last_status Last Koha backup status (1=success, 0=failure).
+# TYPE koha_backup_last_status gauge
+koha_backup_last_status{env="${BACKUP_METRICS_ENV_LABEL}",service="${BACKUP_METRICS_SERVICE_LABEL}"} ${backup_status}
+EOF
+)"
+
+  printf '%s\n' "${metrics_payload}" | docker run --rm -i \
+    -v "${NODE_EXPORTER_TEXTFILE_DIR}:/metrics" \
+    alpine:3.20 \
+    sh -c "cat > /metrics/${BACKUP_METRICS_FILE}"
+}
+
+on_exit() {
+  local exit_code=$?
+
+  if [ -n "${WORK_DIR}" ] && [ -d "${WORK_DIR}" ]; then
+    rm -rf "${WORK_DIR}" >/dev/null 2>&1 || true
+  fi
+
+  if [ "${emit_metrics_on_exit}" = "1" ]; then
+    if [ "${exit_code}" -eq 0 ] && [ "${backup_status}" != "1" ]; then
+      backup_status="1"
+      success_timestamp="$(date +%s)"
+    fi
+    emit_backup_metrics
+  fi
+
+  exit "${exit_code}"
 }
 
 safe_mkdir() {
@@ -155,6 +241,7 @@ BACKUP_HOST=$(hostname)
 BACKUP_ROOT=${BACKUP_ROOT}
 BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE}
 BACKUP_RCLONE_FOLDER=${BACKUP_RCLONE_FOLDER}
+BACKUP_RCLONE_RETENTION_DAYS=${BACKUP_RCLONE_RETENTION_DAYS}
 BACKUP_OFFSITE_EXCLUDE_FILES=${BACKUP_OFFSITE_EXCLUDE_FILES}
 DB_NAME=${DB_NAME}
 KOHA_INSTANCE=${KOHA_INSTANCE:-library}
@@ -167,6 +254,20 @@ META
     printf 'File\tSizeBytes\n'
     find "${WORK_DIR}" -maxdepth 1 -type f -printf "%f\t%s\n" | sort
   } >"${WORK_DIR}/backup_manifest.tsv"
+}
+
+rclone_remote_root() {
+  local remote="$1"
+  local folder="$2"
+  local remote_root
+
+  folder="${folder#/}"
+  remote_root="${remote}:"
+  if [ -n "${folder}" ]; then
+    remote_root="${remote_root}${folder%/}"
+  fi
+
+  printf '%s\n' "${remote_root}"
 }
 
 copy_lightweight_offsite() {
@@ -182,11 +283,7 @@ copy_lightweight_offsite() {
 
   command -v rclone >/dev/null 2>&1 || die "rclone is required when BACKUP_RCLONE_REMOTE is set"
 
-  folder="${folder#/}"
-  remote_root="${remote}:"
-  if [ -n "${folder}" ]; then
-    remote_root="${remote_root}${folder%/}"
-  fi
+  remote_root="$(rclone_remote_root "${remote}" "${folder}")"
   offsite_dir="${remote_root%/}/${TS}"
 
   IFS=',' read -r -a OFFSITE_EXCLUDE_PATTERNS <<< "${BACKUP_OFFSITE_EXCLUDE_FILES}"
@@ -219,33 +316,99 @@ apply_retention() {
   find "${target_root}" -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +"${BACKUP_RETENTION_DAYS}" -print -exec rm -rf {} + || true
 }
 
+apply_rclone_retention() {
+  local remote="${BACKUP_RCLONE_REMOTE:-}"
+  local folder="${BACKUP_RCLONE_FOLDER:-}"
+  local retention_days="${BACKUP_RCLONE_RETENTION_DAYS:-0}"
+  local remote_root dirs cutoff_epoch dir date_part time_part dir_epoch remote_dir
+
+  [ -n "${remote}" ] || return 0
+
+  if ! [[ "${retention_days}" =~ ^[0-9]+$ ]]; then
+    warn "BACKUP_RCLONE_RETENTION_DAYS is not numeric (${retention_days}), rclone retention skipped"
+    return 0
+  fi
+
+  if [ "${retention_days}" -eq 0 ]; then
+    log "Rclone retention disabled (BACKUP_RCLONE_RETENTION_DAYS=0)"
+    return 0
+  fi
+
+  command -v rclone >/dev/null 2>&1 || die "rclone is required when BACKUP_RCLONE_REMOTE is set"
+
+  remote_root="$(rclone_remote_root "${remote}" "${folder}")"
+  cutoff_epoch="$(date -u -d "${retention_days} days ago" +%s)" || {
+    warn "Unable to calculate rclone retention cutoff, rclone retention skipped"
+    return 0
+  }
+
+  if ! dirs="$(rclone lsf --dirs-only "${remote_root}")"; then
+    warn "Unable to list rclone backup root (${remote_root}), rclone retention skipped"
+    return 0
+  fi
+
+  while IFS= read -r dir; do
+    dir="${dir%/}"
+    [ -n "${dir}" ] || continue
+    [[ "${dir}" == 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9] ]] || continue
+
+    date_part="${dir%%_*}"
+    time_part="${dir#*_}"
+    time_part="${time_part//-/:}"
+    if ! dir_epoch="$(date -u -d "${date_part} ${time_part} UTC" +%s 2>/dev/null)"; then
+      warn "Unable to parse rclone backup timestamp (${dir}), skip"
+      continue
+    fi
+
+    if [ "${dir_epoch}" -lt "${cutoff_epoch}" ]; then
+      remote_dir="${remote_root%/}/${dir}"
+      log "Rclone retention purge: ${remote_dir}"
+      rclone purge "${remote_dir}" || warn "Failed to purge rclone backup dir: ${remote_dir}"
+    fi
+  done <<< "${dirs}"
+}
+
 main() {
   load_env "$@"
+
+  NODE_EXPORTER_TEXTFILE_DIR="$(read_env_or_default NODE_EXPORTER_TEXTFILE_DIR "/data/node-exporter-textfile")"
+  BACKUP_METRICS_FILE="$(read_env_or_default BACKUP_METRICS_FILE "koha_backup.prom")"
+  BACKUP_METRICS_ENV_LABEL="$(read_env_or_default BACKUP_METRICS_ENV_LABEL "prod")"
+  BACKUP_METRICS_SERVICE_LABEL="$(read_env_or_default BACKUP_METRICS_SERVICE_LABEL "koha")"
+
+  if has_arg "--dry-run" "$@"; then
+    DRY_RUN="true"
+    emit_metrics_on_exit="0"
+  fi
+
+  trap on_exit EXIT
   require_vars
 
   BACKUP_ROOT="${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
   BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
   BACKUP_RCLONE_FOLDER="${BACKUP_RCLONE_FOLDER:-}"
+  BACKUP_RCLONE_RETENTION_DAYS="${BACKUP_RCLONE_RETENTION_DAYS:-0}"
   BACKUP_OFFSITE_EXCLUDE_FILES="${BACKUP_OFFSITE_EXCLUDE_FILES:-koha_data.tar.gz}"
   BACKUP_TMP_ROOT="${BACKUP_TMP_ROOT:-/tmp}"
   BACKUP_INCLUDE_LOGS="${BACKUP_INCLUDE_LOGS:-true}"
   BACKUP_INCLUDE_ES_DATA="${BACKUP_INCLUDE_ES_DATA:-false}"
   BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 
-  if has_arg "--dry-run" "$@"; then
+  if is_true "${DRY_RUN}"; then
     log "DRY-RUN OK"
     log "Runtime: $(docker_runtime_mode), stack=${STACK_NAME:-koha}"
     log "Would dump DB '${DB_NAME}' from service db"
     log "Would archive: ${VOL_KOHA_CONF}, ${VOL_KOHA_DATA}, logs=${BACKUP_INCLUDE_LOGS}, es=${BACKUP_INCLUDE_ES_DATA}"
     log "Would write backup under: ${BACKUP_PATH:-${PROJECT_ROOT}/backups}"
-    log "Would apply retention: ${BACKUP_RETENTION_DAYS} days"
+    log "Would apply local retention: ${BACKUP_RETENTION_DAYS} days"
+    log "Would apply rclone retention: ${BACKUP_RCLONE_RETENTION_DAYS} days"
+    log "DRY-RUN: backup freshness metrics will not be updated"
     exit 0
   fi
 
   TS="$(date -u +'%Y-%m-%d_%H-%M-%S')"
   FINAL_DIR="${BACKUP_ROOT}/${TS}"
   WORK_DIR="$(mktemp -d "${BACKUP_TMP_ROOT%/}/koha-backup-${TS}-XXXXXX")"
-  trap 'rm -rf "${WORK_DIR}"' ERR INT TERM
 
   safe_mkdir "${BACKUP_ROOT}"
   [ ! -e "${FINAL_DIR}" ] || die "Backup dir already exists: ${FINAL_DIR}"
@@ -302,7 +465,10 @@ main() {
 
   copy_lightweight_offsite
   apply_retention "${BACKUP_ROOT}"
+  apply_rclone_retention
 
+  backup_status="1"
+  success_timestamp="$(date +%s)"
   log "Backup completed: ${FINAL_DIR}"
   ls -lh "${FINAL_DIR}"
 }
