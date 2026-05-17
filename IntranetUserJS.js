@@ -77,8 +77,18 @@ $(document).ready(function() {
             ? { id: "kdv-update-btn", icon: "fa-refresh", text: KDV_CONFIG.I18N.updateBtn, method: "PUT" }
             : { id: "kdv-integrate-btn", icon: "fa-cloud-upload", text: KDV_CONFIG.I18N.archiveBtn, method: "POST" };
 
+        const skipOptimizationHtml = !isArchived
+            ? `
+                <label for="kdv-skip-optimization" class="checkbox-inline" style="margin-right: 8px;">
+                    <input type="checkbox" id="kdv-skip-optimization" name="skip_optimization">
+                    Не оптимізовувати файл
+                </label>
+            `
+            : "";
+
         const btnHtml = `
             <div class="btn-group">
+                ${skipOptimizationHtml}
                 <button id="${btnConfig.id}" class="btn btn-default btn-sm" style="${isArchived ? 'color: #007bff; font-weight: bold;' : ''}">
                     <i class="fa ${btnConfig.icon}"></i> ${btnConfig.text}
                 </button>
@@ -102,6 +112,10 @@ $(document).ready(function() {
                     type: btnConfig.method,
                     xhrFields: { withCredentials: true },
                     headers: buildHeaders(),
+                    contentType: btnConfig.method === "POST" ? "application/json" : undefined,
+                    data: btnConfig.method === "POST" ? JSON.stringify({
+                        skip_optimization: document.getElementById("kdv-skip-optimization")?.checked ?? false
+                    }) : undefined,
                     success: (res) => {
                         if (btnConfig.method === "POST" && res.task_id) {
                             startPolling(res.task_id, btn, originalHtml);
