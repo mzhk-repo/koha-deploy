@@ -51,6 +51,9 @@ services:
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
       KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
       KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
     healthcheck:
       start_period: 5m
       interval: 30s
