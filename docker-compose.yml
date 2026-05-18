@@ -109,43 +109,35 @@ services:
       - -lc
       - |
         set -euo pipefail
-        if [ "$${USE_ELASTICSEARCH:-true}" != "true" ]; then
+        if [ "$$USE_ELASTICSEARCH" != "true" ]; then
           echo "Elasticsearch disabled; keeping koha-es-indexer idle"
           exec sleep infinity
         fi
 
-        : "$${KOHA_INSTANCE:=library}"
-        : "$${KOHA_ES_INDEXER_BATCH_SIZE:=10}"
-        : "$${KOHA_ES_INDEXER_WAIT_TIMEOUT:=300}"
-        export KOHA_CONF="/etc/koha/sites/$${KOHA_INSTANCE}/koha-conf.xml"
-        export KOHA_HOME="$${KOHA_HOME:-/usr/share/koha}"
-        export PERL5LIB="$${PERL5LIB:-/usr/share/koha/lib}"
+        export KOHA_HOME="/usr/share/koha"
+        export PERL5LIB="/usr/share/koha/lib"
 
         deadline=$$((SECONDS + KOHA_ES_INDEXER_WAIT_TIMEOUT))
         wait_until() {
           local label="$$1"
           shift
           until "$$@"; do
-            if [ "$${SECONDS}" -ge "$${deadline}" ]; then
-              echo "ERROR: timeout waiting for $${label}" >&2
+            if [ "$$SECONDS" -ge "$$deadline" ]; then
+              echo "ERROR: timeout waiting for $$label" >&2
               exit 1
             fi
             sleep 3
           done
         }
 
-        wait_until "koha-conf.xml" test -r "$${KOHA_CONF}"
-        wait_until "Koha database" koha-mysql "$${KOHA_INSTANCE}" -N -B -e "SELECT 1"
-        es_host="$${ELASTICSEARCH_HOST:-es:9200}"
-        es_host="$${es_host#http://}"
-        es_host="$${es_host#https://}"
-        es_host="$${es_host%%/*}"
-        wait_until "Elasticsearch" bash -c "</dev/tcp/$${es_host%:*}/$${es_host##*:}"
-        wait_until "RabbitMQ STOMP" bash -c "</dev/tcp/$${MB_HOST:-rabbitmq}/$${MB_PORT:-61613}"
+        wait_until "koha-conf.xml" test -r "$$KOHA_CONF"
+        wait_until "Koha database" koha-mysql "$$KOHA_INSTANCE" -N -B -e "SELECT 1"
+        wait_until "Elasticsearch" perl -MIO::Socket::INET -e 'my $$h=$$ENV{ELASTICSEARCH_HOST}||q(es:9200); $$h=~s{^https?://}{}; $$h=~s{/.*$$}{}; my ($$host,$$port)=split /:/,$$h,2; $$port ||= 9200; exit(IO::Socket::INET->new(PeerHost=>$$host,PeerPort=>$$port,Proto=>q(tcp),Timeout=>3)?0:1)'
+        wait_until "RabbitMQ STOMP" perl -MIO::Socket::INET -e 'exit(IO::Socket::INET->new(PeerHost=>$$ENV{MB_HOST}||q(rabbitmq),PeerPort=>$$ENV{MB_PORT}||61613,Proto=>q(tcp),Timeout=>3)?0:1)'
 
-        exec runuser --preserve-environment -u "$${KOHA_INSTANCE}-koha" -- \
+        exec runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
           /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
-          --batch_size "$${KOHA_ES_INDEXER_BATCH_SIZE}"
+          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE"
     restart: unless-stopped
     logging:
       driver: json-file

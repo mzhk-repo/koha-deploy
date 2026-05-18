@@ -236,3 +236,24 @@
 - Runtime-діагностика:
   - до ручного старту: `koha_library-elastic_index` мав `5` ready messages і `0` consumers;
   - після `koha-es-indexer --start library`: `koha_library-elastic_index` став `0` ready messages і `1` consumer.
+
+### 34) Deploy fix: прибрано false-positive env keys з `koha-es-indexer` command
+
+- Контекст:
+  - `verify-env.sh` сканує `docker-compose.yml` на `${VAR}` і вимагає, щоб усі такі ключі були в `.env.example`;
+  - inline shell нового `koha-es-indexer` сервісу містив runtime `${...}` expressions, які не є compose env keys;
+  - deploy падав на missing keys: `deadline`, `es_host`, `KOHA_CONF`, `KOHA_HOME`, `label`, `PERL5LIB`, `SECONDS`.
+
+- Оновлено:
+  - `docker-compose.yml`
+
+- Зміни:
+  - runtime shell у `koha-es-indexer` переписано без `${...}` placeholders;
+  - defaults для `KOHA_HOME` і `PERL5LIB` задано явно;
+  - readiness checks для Elasticsearch/RabbitMQ виконуються через Perl `IO::Socket::INET` і `%ENV`, щоб не конфліктувати з compose env validation.
+
+- Перевірено:
+  - `bash scripts/verify-env.sh --example-only` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml config` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
+  - `git diff --check -- docker-compose.yml` - OK.
