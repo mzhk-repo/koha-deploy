@@ -51,9 +51,6 @@ services:
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
       KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
       KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
-    secrets:
-      - source: app_env_payload
-        target: app_env_payload
     healthcheck:
       start_period: 5m
       interval: 30s
@@ -103,30 +100,14 @@ services:
     pids_limit: !reset null
     restart: !reset null
     depends_on: !reset null
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        while IFS= read -r $$line || [ -n "$$line" ]; do
-          case "$$line" in
-            ""|\#*) continue ;;
-          esac
-          export "$$line"
-        done < /run/secrets/app_env_payload
-        if [ -z "$${MYSQL_PASSWORD:-}" ] && [ -n "$${DB_PASS:-}" ]; then
-          export MYSQL_PASSWORD="$${DB_PASS}"
-        fi
-        if [ -z "$${MB_PASS:-}" ] && [ -n "$${RABBITMQ_PASS:-}" ]; then
-          export MB_PASS="$${RABBITMQ_PASS}"
-        fi
-        exec "$$@"
-      - --
     env_file: !reset []
     environment: !override
       MYSQL_SERVER: ${DB_HOST:-db}
       MYSQL_USER: ${DB_USER}
       DB_NAME: ${DB_NAME}
       KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
       KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
       TZ: ${KOHA_TIMEZONE}
       MB_HOST: ${MB_HOST:-rabbitmq}
@@ -137,9 +118,6 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
-    secrets:
-      - source: app_env_payload
-        target: app_env_payload
     deploy:
       replicas: 1
       restart_policy:

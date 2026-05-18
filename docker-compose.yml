@@ -109,6 +109,7 @@ services:
       - -lc
       - |
         set -euo pipefail
+
         if [ "$$USE_ELASTICSEARCH" != "true" ]; then
           echo "Elasticsearch disabled; keeping koha-es-indexer idle"
           exec sleep infinity
@@ -116,6 +117,15 @@ services:
 
         export KOHA_HOME="/usr/share/koha"
         export PERL5LIB="/usr/share/koha/lib"
+
+        if ! getent group "$$KOHA_INSTANCE-koha" >/dev/null; then
+          groupadd --gid "$$KOHA_INSTANCE_GID" "$$KOHA_INSTANCE-koha"
+        fi
+        if ! getent passwd "$$KOHA_INSTANCE-koha" >/dev/null; then
+          useradd --uid "$$KOHA_INSTANCE_UID" --gid "$$KOHA_INSTANCE_GID" \
+            --home-dir "/home/$$KOHA_INSTANCE-koha" --create-home --shell /bin/bash \
+            "$$KOHA_INSTANCE-koha"
+        fi
 
         deadline=$$((SECONDS + KOHA_ES_INDEXER_WAIT_TIMEOUT))
         wait_until() {
@@ -158,15 +168,15 @@ services:
     environment:
       MYSQL_SERVER: ${DB_HOST:-db}
       MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASS}
       DB_NAME: ${DB_NAME}
       KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
       KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
       TZ: ${KOHA_TIMEZONE}
       MB_HOST: ${MB_HOST:-rabbitmq}
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
-      MB_PASS: ${RABBITMQ_PASS}
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}

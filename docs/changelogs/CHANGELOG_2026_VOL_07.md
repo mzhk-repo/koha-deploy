@@ -257,3 +257,27 @@
   - `docker compose --env-file .env.example -f docker-compose.yml config` - OK;
   - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
   - `git diff --check -- docker-compose.yml` - OK.
+
+### 35) Deploy fix: `koha-es-indexer` більше не залежить від Koha container user bootstrap
+
+- Контекст:
+  - Swarm update `koha_koha-es-indexer` падав з `task: non-zero exit (1)`;
+  - логи task показали `read: arg count` через duplicated secret-entrypoint і `runuser: user library-koha does not exist`;
+  - окремий container `koha-es-indexer` не проходить Koha setup pipeline основного container, тому instance user/group треба створювати ідемпотентно всередині самого сервісу.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+
+- Зміни:
+  - прибрано окремий Swarm entrypoint і secret payload mount з `koha-es-indexer`;
+  - daemon покладається на live `koha-conf.xml`, де DB/RabbitMQ credentials уже пропатчені bootstrap-модулями;
+  - перед запуском `es_indexer_daemon.pl` сервіс ідемпотентно створює `${KOHA_INSTANCE}-koha` user/group з `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID`;
+  - додано default `KOHA_INSTANCE_UID=1000`, `KOHA_INSTANCE_GID=1000` у `.env.example`.
+
+- Перевірено:
+  - `bash scripts/verify-env.sh --example-only` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml config` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
+  - `git diff --check -- docker-compose.yml docker-compose.swarm.yml .env.example docs/changelogs/CHANGELOG_2026_VOL_07.md` - OK.
