@@ -209,3 +209,30 @@
   - `bash scripts/test-restore.sh --help` - OK;
   - `SERVER_ENV=prod bash scripts/test-restore.sh --env prod` - OK, використано backup set `/data/backup/koha/2026-05-10_11-54-21`, SQL dump імпортовано у тимчасову MariaDB DB `koha_restore_smoke`, перевірено 277 таблиць;
   - textfile metrics створені на host: `/data/node-exporter-textfile/koha_backup.prom`, `/data/node-exporter-textfile/koha_restore_smoke.prom`, обидва status `1`.
+
+
+### 33) Elasticsearch indexer: винесено daemon в окремий supervised сервіс
+
+- Контекст:
+  - `koha-es-indexer --status library` показував `ES indexing daemon not running`;
+  - RabbitMQ черга `koha_library-elastic_index` мала повідомлення без consumer;
+  - `SearchEngine=Elasticsearch`, індекси існували, але auto-indexing не обробляв queued jobs;
+  - one-shot старт `koha-es-indexer` у Koha container міг падати до готовності RabbitMQ/ES/DNS і не мав Swarm/s6 supervision.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+  - `scripts/koha-elasticsearch-index-guard.sh`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано окремий довгоживучий сервіс `koha-es-indexer`;
+  - сервіс запускає `es_indexer_daemon.pl` у foreground через `runuser --preserve-environment` під `${KOHA_INSTANCE}-koha`;
+  - перед стартом daemon чекає `koha-conf.xml`, DB, Elasticsearch і RabbitMQ STOMP;
+  - додано `KOHA_ES_INDEXER_BATCH_SIZE` і `KOHA_ES_INDEXER_WAIT_TIMEOUT`;
+  - ES guard перезапускає managed service `koha-es-indexer`, а legacy in-container daemon лишається fallback.
+
+- Runtime-діагностика:
+  - до ручного старту: `koha_library-elastic_index` мав `5` ready messages і `0` consumers;
+  - після `koha-es-indexer --start library`: `koha_library-elastic_index` став `0` ready messages і `1` consumer.

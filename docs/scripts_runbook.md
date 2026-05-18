@@ -134,7 +134,8 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 - Автоматично створює відсутні індекси `koha_${KOHA_INSTANCE}_biblios` і `koha_${KOHA_INSTANCE}_authorities` через `koha-elasticsearch --rebuild --reset`.
 - Якщо індекси існують, порівнює count у DB (`biblio`, `auth_header`) з Elasticsearch `_count`.
 - За замовчуванням `ORCHESTRATOR_ES_REINDEX_ON_MISMATCH=auto`: reindex запускається тільки коли ES суттєво відстає від DB за `ORCHESTRATOR_ES_MISMATCH_THRESHOLD_PERCENT`.
-- Після перевірок перезапускає `koha-es-indexer`, щоб daemon перечитав актуальний `SearchEngine` і не залишався у stale Zebra context після bootstrap.
+- Після перевірок перезапускає керований сервіс `koha-es-indexer`, щоб daemon перечитав актуальний `SearchEngine` і не залишався у stale Zebra context після bootstrap.
+- `koha-es-indexer` винесений в окремий довгоживучий сервіс, який перед стартом чекає `koha-conf.xml`, DB, Elasticsearch і RabbitMQ STOMP. Це прибирає race condition, коли one-shot старт у контейнері Koha падає до готовності sidecar-сервісів і черга `elastic_index` лишається без consumer.
 - Runtime exec іде через `docker_runtime_exec`, тому підтримує Swarm і Compose fallback.
 
 #### Manual execution
@@ -142,6 +143,13 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 ORCHESTRATOR_MODE=swarm DOCKER_RUNTIME_MODE=swarm STACK_NAME=koha \
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" \
 bash scripts/koha-elasticsearch-index-guard.sh --dry-run
+```
+
+#### Runtime checks
+```bash
+docker service ps koha_koha-es-indexer --no-trunc
+docker exec -i "$(docker ps -q --filter label=com.docker.swarm.service.name=koha_rabbitmq)" \
+  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
 ```
 
 ### `scripts/koha-lockdown-password-prefs.sh`

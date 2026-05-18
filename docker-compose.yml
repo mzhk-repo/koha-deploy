@@ -102,6 +102,97 @@ services:
       retries: 5
       start_period: 20s
 
+  koha-es-indexer:
+    image: ${KOHA_IMAGE}
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        if [ "$${USE_ELASTICSEARCH:-true}" != "true" ]; then
+          echo "Elasticsearch disabled; keeping koha-es-indexer idle"
+          exec sleep infinity
+        fi
+
+        : "$${KOHA_INSTANCE:=library}"
+        : "$${KOHA_ES_INDEXER_BATCH_SIZE:=10}"
+        : "$${KOHA_ES_INDEXER_WAIT_TIMEOUT:=300}"
+        export KOHA_CONF="/etc/koha/sites/$${KOHA_INSTANCE}/koha-conf.xml"
+        export KOHA_HOME="$${KOHA_HOME:-/usr/share/koha}"
+        export PERL5LIB="$${PERL5LIB:-/usr/share/koha/lib}"
+
+        deadline=$$((SECONDS + KOHA_ES_INDEXER_WAIT_TIMEOUT))
+        wait_until() {
+          local label="$$1"
+          shift
+          until "$$@"; do
+            if [ "$${SECONDS}" -ge "$${deadline}" ]; then
+              echo "ERROR: timeout waiting for $${label}" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+        }
+
+        wait_until "koha-conf.xml" test -r "$${KOHA_CONF}"
+        wait_until "Koha database" koha-mysql "$${KOHA_INSTANCE}" -N -B -e "SELECT 1"
+        es_host="$${ELASTICSEARCH_HOST:-es:9200}"
+        es_host="$${es_host#http://}"
+        es_host="$${es_host#https://}"
+        es_host="$${es_host%%/*}"
+        wait_until "Elasticsearch" bash -c "</dev/tcp/$${es_host%:*}/$${es_host##*:}"
+        wait_until "RabbitMQ STOMP" bash -c "</dev/tcp/$${MB_HOST:-rabbitmq}/$${MB_PORT:-61613}"
+
+        exec runuser --preserve-environment -u "$${KOHA_INSTANCE}-koha" -- \
+          /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
+          --batch_size "$${KOHA_ES_INDEXER_BATCH_SIZE}"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${KOHA_ES_INDEXER_MEM_LIMIT:-1g}
+    cpus: ${KOHA_ES_INDEXER_CPUS:-0.50}
+    networks:
+      - kohanet
+    environment:
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASS}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      TZ: ${KOHA_TIMEZONE}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      MB_PASS: ${RABBITMQ_PASS}
+      USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
+      MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
+      KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      es:
+        condition: service_healthy
+    volumes:
+      - ${VOL_KOHA_CONF}:/etc/koha/sites
+      - ${VOL_KOHA_CONF}/${KOHA_INSTANCE}:/etc/koha/sites/default
+      - ${VOL_KOHA_DATA}:/var/lib/koha
+      - ${VOL_KOHA_LOGS}:/var/log/koha
+
   db:
     image: ${MARIADB_IMAGE:-docker.io/mariadb:11}
     command:
