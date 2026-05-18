@@ -292,6 +292,7 @@ koha-deploy/
 | Сервіс | Образ | Назначення | Порти (внутрішні) | Health Check |
 |---|---|---|---|---|
 | **koha** | ext. registry | Web-додаток Koha (Plack) | 8082 (OPAC), 8081 (Intranet) | HTTP 8081, 15s interval |
+| **koha-es-indexer** | ext. registry | Окремий supervised Elasticsearch indexing daemon | n/a | Swarm task + RabbitMQ consumer |
 | **db** | `mariadb:11` | Реляційна БД | 3306 | mariadb-admin ping, 10s |
 | **es** | local build | Elasticsearch search | 9200 | curl http://9200, 10s |
 | **rabbitmq** | local build | Message queue, async | 5672 (AMQP), 61613 (STOMP), 15672 (mgmt) | rabbitmq-diagnostics ping |
@@ -306,6 +307,13 @@ koha
     - rabbitmq (service_healthy)
     - memcached (service_started)
     - es (service_healthy)
+
+koha-es-indexer
+  waits for:
+    - live koha-conf.xml
+    - db SQL availability
+    - Elasticsearch TCP availability
+    - RabbitMQ STOMP availability
 ```
 
 ### Resource Limits
@@ -313,12 +321,13 @@ koha
 | Сервіс | Memory | CPU | PID Limit |
 |---|---|---|---|
 | **koha** | 2 GB (default) | 1.50 | 1024 |
+| **koha-es-indexer** | 1 GB (default) | 0.50 | 512 |
 | **db** | 2 GB (default) | 1.50 | 1024 |
 | **es** | 1 GB (default) | 1.00 | 1024 |
 | **rabbitmq** | 512 MB (default) | 1.00 | 1024 |
 | **memcached** | 256 MB (default) | 0.50 | 1024 |
 
-> **Примітка**: Усі ліміти можуть бути перевизначені через `.env` змінні (e.g., `KOHA_MEM_LIMIT`, `DB_CPUS`).
+> **Примітка**: Усі ліміти можуть бути перевизначені через `.env` змінні (e.g., `KOHA_MEM_LIMIT`, `KOHA_ES_INDEXER_MEM_LIMIT`, `DB_CPUS`).
 
 ---
 
@@ -341,7 +350,7 @@ koha
 |---|---|---|
 | **Koha Config** | `KOHA_INSTANCE`, `KOHA_DOMAIN`, `KOHA_TIMEZONE` | env.*.enc |
 | **Database** | `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_ROOT_PASS` | env.*.enc (secret) |
-| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE` | env.*.enc |
+| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE`, `KOHA_ES_INDEXER_BATCH_SIZE`, `KOHA_ES_INDEXER_WAIT_TIMEOUT` | env.*.enc |
 | **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | env.*.enc (secret) |
 | **Memcached** | `MEMCACHED_SERVERS` | env.*.enc |
 | **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | env.*.enc |
@@ -355,7 +364,7 @@ koha
 | **Monitoring** | `NODE_EXPORTER_TEXTFILE_DIR`, `BACKUP_METRICS_FILE` | env.*.enc |
 | **API** | `KOHA_REST_BASIC_AUTH` | env.*.enc |
 | **Volume Paths** | `VOL_DB_PATH`, `VOL_KOHA_CONF`, `VOL_KOHA_DATA` | env.*.enc |
-| **Resource Limits** | `KOHA_MEM_LIMIT`, `DB_CPUS`, `ES_MEM_LIMIT` | env.*.enc |
+| **Resource Limits** | `KOHA_MEM_LIMIT`, `KOHA_ES_INDEXER_MEM_LIMIT`, `KOHA_ES_INDEXER_CPUS`, `DB_CPUS`, `ES_MEM_LIMIT` | env.*.enc |
 | **Logging** | `LOG_MAX_SIZE`, `LOG_MAX_FILE` | env.*.enc |
 | **Swarm** | `STACK_NAME`, `ORCHESTRATOR_ES_GUARD`, `ORCHESTRATOR_SWARM_BUILD_SERVICES` | env.*.enc |
 
@@ -711,8 +720,16 @@ ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh
 
 **Post-deploy (виконується автоматично оркестратором):**
 1. `bootstrap-live-configs.sh --all` (в Swarm runtime mode)
-2. `koha-elasticsearch-index-guard.sh` (smart reindex при порожньому volume)
+2. `koha-elasticsearch-index-guard.sh` (smart reindex при порожньому volume + restart managed `koha-es-indexer`)
 3. `koha-lockdown-password-prefs.sh` (OPAC password reset заблоковано)
+
+**Швидка перевірка після Swarm deploy:**
+```bash
+docker service ls --filter name=koha_
+docker service ps koha_koha-es-indexer --no-trunc
+docker exec -i "$(docker ps -q --filter label=com.docker.swarm.service.name=koha_rabbitmq)" \
+  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+```
 
 ### Automated Deploy (GitHub Actions)
 
@@ -869,12 +886,22 @@ docker compose exec db tail -f /var/log/mysql/slow.log
 # Перевірити ES status
 docker compose exec es curl http://localhost:9200/_cluster/health
 
+# Swarm: перевірити окремий indexing daemon
+docker service ps koha_koha-es-indexer --no-trunc
+docker service logs --tail 80 koha_koha-es-indexer
+
+# RabbitMQ: elastic_index має мати consumer і не накопичувати ready messages
+docker exec -i "$(docker ps -q --filter label=com.docker.swarm.service.name=koha_rabbitmq)" \
+  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+
 # Rebuild ES index
 docker compose exec koha koha-elasticsearch-indexer --rebuild
 
 # Check disk space (ES needs space)
 docker system df
 ```
+
+`koha-es-indexer` запускається окремим Swarm service. Він не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
 
 ### External Tunnel / Traefik routing issues
 
@@ -958,6 +985,7 @@ ls -lh $(docker inspect koha | jq -r '.[0].LogPath' | xargs dirname)
 - ✅ Scripts refactoring: безпечний SOPS env-flow для Категорій 1а/1б/2 (без `source`/eval)
 - ✅ Swarm deploy orchestrator з versioned Docker secrets (env payload, DB, RabbitMQ)
 - ✅ Smart Elasticsearch index guard при deploy на порожньому volume
+- ✅ Окремий supervised `koha-es-indexer` service для RabbitMQ `elastic_index` queue
 - ✅ `search-prefs` + `api-prefs` bootstrap модулі (SearchEngine, RESTBasicAuth)
 - ✅ Backup offsite через rclone + окремий retention + textfile metrics
 - ✅ `test-restore.sh` — restore smoke-test у тимчасову MariaDB (не торкає prod)
@@ -967,5 +995,5 @@ ls -lh $(docker inspect koha | jq -r '.[0].LogPath' | xargs dirname)
 ---
 
 **Версія документу:** 2026 Q2  
-**Останнє оновлення:** 2026-05-17  
+**Останнє оновлення:** 2026-05-18
 **Status:** ✅ Production Ready
