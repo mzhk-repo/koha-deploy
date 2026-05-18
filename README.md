@@ -4,7 +4,7 @@
 > Оркестровано Docker Compose, керовано через env-SSOT, розгортається через безпечний CI/CD.
 
 [![Статус](https://img.shields.io/badge/status-production-brightgreen)]()
-[![Версія](https://img.shields.io/badge/version-2026_Q1-blue)]()
+[![Версія](https://img.shields.io/badge/version-2026_Q2-blue)]()
 [![Ліцензія](https://img.shields.io/badge/license-AGPL-green)]()
 [![Безпека](https://img.shields.io/badge/security-hardened-blueviolet)]()
 [![Docker](https://img.shields.io/badge/runtime-Docker%20Compose-2496ED)]()
@@ -37,36 +37,48 @@
 
 | Параметр | Значення |
 |---|---|
-| **Поточна версія** | `2026 Q1` (Roadmap Hardening v2) |
+| **Поточна версія** | `2026 Q2` (Swarm + SOPS + IaC completeness) |
 | **Стадія** | **Production** |
-| **Останній реліз** | 2026-03-03 |
-| **Наступний мілстоун** | Observability enhancement (Roadmap 2.1) |
-| **Відомі критичні баги** | `0` → [Issues](ROADMAP_PROD.md) |
-| **Технічний борг** | 🟡 **Середній** — див. [ROADMAP_PROD.md](ROADMAP_PROD.md#-performance-baseline) |
+| **Останній реліз** | 2026-05-10 |
+| **Наступний мілстоун** | CSP enforcement (Roadmap 2.4) + Observability (Roadmap 2.1) |
+| **Відомі критичні баги** | `0` → [Issues](docs/ROADMAP_PROD.md) |
+| **Технічний борг** | 🟡 **Середній** — див. [docs/ROADMAP_PROD.md](docs/ROADMAP_PROD.md#-performance-baseline) |
 
 ### Активні ініціативи
 
 - ✅ Базова безпека та хардeнінг (Roadmap 1.1–1.4): **CLOSED**
+- ✅ Scripts refactoring / SOPS env-flow (Категорії 1а/1б/2): **CLOSED**
+- ✅ Swarm deploy orchestrator + versioned Docker secrets: **CLOSED**
+- ✅ IaC completeness (OIDC, Identity Provider, search-prefs, api-prefs, opac-matomo, CSP): **CLOSED**
+- ✅ Backup offsite via rclone + textfile metrics + test-restore.sh: **CLOSED**
 - 🔄 Спостережуваність (_Observability_): **IN PROGRESS**
-  - Логування централізовано, метрики базові
-  - Планується: розподілене трасування, алерти
+  - Backup/restore freshness metrics через Node Exporter textfile collector
+  - Планується: Prometheus/Alertmanager, розподілене трасування
+- 🔄 CSP enforcement (Roadmap 2.4): **IN PROGRESS**
+  - CSP у `report-only` режимі, enforcement заблокований `unsafe-eval` (Gettext)
+  - Наступний крок: ідентифікувати enforced CSP runtime source, фіналізувати allowlist
 - ⏸️ Performance baseline: **SCHEDULED**
-  - Передбачається: MariaDB tuning, Product analytics, SLO-driven metrics
+  - Передбачається: MariaDB tuning, SLO-driven metrics
 
 ### Що саме було закрито
 
-1. **Секрети таCI/CD**: обов'язкові перевірки на `main` (gitleaks, secret-scan, shellcheck, hadolint).
+1. **Секрети та CI/CD**: обов'язкові перевірки на `main` (gitleaks, shellcheck, hadolint, Trivy config, `paths-ignore` для docs).
 2. **Runtime hardening**: `security_opt`, `cap_drop`, memory/cpu limits для всіх сервісів.
-3. **Identity lockdown**: OPAC password reset заблокована.
-4. **Supply-chain**: базові SBOM + Trivy config gate.
-5. **Backup/Restore**: full-featured з dry-run, PITR, автоматичний ES rebuild.
-6. **CI/CD deploy**: автоматичний деплой на `main` через SSH.
+3. **Identity lockdown**: OPAC password reset заблокована через `koha-lockdown-password-prefs.sh`.
+4. **Supply-chain**: Trivy config gate в CI.
+5. **Backup/Restore**: full-featured з dry-run, PITR, автоматичний ES rebuild, rclone offsite, test-restore smoke.
+6. **CI/CD deploy**: автоматичний деплой на `main` через SSH; Swarm orchestrator з SOPS-розшифровкою.
+7. **Traefik gateway**: edge access через `Cloudflare Tunnel -> Traefik -> proxy-net -> koha`; tunnel сервіс видалено з compose.
+8. **SOPS env-flow**: `env.dev.enc`/`env.prod.enc` як SSOT; безпечний dotenv-parser без `source`/eval; автономні скрипти на `/dev/shm`.
+9. **IaC completeness**: всі ключові sysprefs/config керовані через bootstrap модулі (OIDC, MS365 Identity Provider, Matomo, CSP, SearchEngine, RESTBasicAuth, domain, DB credentials).
+10. **Elasticsearch index guard**: smart guard з auto-reindex при deploji на порожньому volume.
 
 ### Відомі обмеження
 
 - Elasticsearch 8.x без x-pack (для production рекомендується x-pack authentication).
-- Product analytics ще не розгорнута (GA4/Matomo в планах).
+- CSP у `report-only` режимі (`CSP_MODE=report-only`); enforcement блокується `unsafe-eval` Koha Gettext/i18n.
 - Розподілене трасування (Jaeger/Tempo) ще не інтегровано.
+- `install-collect-logs-timer.sh` потребує синхронізації systemd unit з autonomous env contract перед production install.
 
 ---
 
@@ -114,7 +126,7 @@
 
 | Шар | Технологія | Версія | Назначення |
 |---|---|---|---|
-| **Web Framework** | Koha | 24.x | Система управління бібліотекою |
+| **Web Framework** | Koha | 25.x | Система управління бібліотекою |
 | **Web Server** | Plack/Apache2 | modern | HTTP-сервер, Load balancing |
 | **База даних** | MariaDB | 11.x | Основне сховище даних |
 | **Search Engine** | Elasticsearch | 8.19.6 | Індексація та пошук |
@@ -143,20 +155,22 @@
 ```
     ┌─────────────────────────────────────────────────────────┐
    │   EXTERNAL USERS (OPAC) & STAFF (Intranet)            │
-   │     (через Cloudflare Tunnel -> Traefik gateway)      │
+   │     (через зовнішній Cloudflare Tunnel stack)         │
     └────────────────────┬────────────────────────────────────┘
                          │ HTTPS
     ┌────────────────────▼────────────────────────────────────┐
-   │   external cloudflared -> Traefik (:80 internal)       │
+   │   Cloudflare Tunnel (external stack) -> Traefik (:80)  │
    │   Host: library.pinokew.buzz / koha.pinokew.buzz      │
+   │   Network: proxy-net (external, shared з Traefik)     │
     └────────────────────┬────────────────────────────────────┘
-                         │ internal kohanet
+                         │ proxy-net (Traefik -> koha only)
     ┌────────────────────▼────────────────────────────────────┐
     │  KOHA (Plack/Apache)                                   │
-    │  - biblios, users, circulation, reporting              │
+    │  - Networks: proxy-net (Traefik) + kohanet (sidecars) │
+    │  - Apache: remoteip + headers modules                 │
     │  - Health check: http://koha:8081 (intranet)          │
     └────────┬───────────┬────────────┬──────────────────────┘
-             │           │            │
+             │           │            │  (kohanet only — Traefik не бачить)
       ┌──────▼──┐  ┌────▼────┐  ┌───▼────┐
       │  MariaDB │  │RabbitMQ │  │  ES    │
       │  (db)    │  │ (queue) │  │ (8.x)  │
@@ -167,7 +181,8 @@
                     │ (cache)    │
                     └────────────┘
 
-    All services in 'kohanet' isolated network
+    kohanet = koha-deploy_kohanet (internal, sidecars isolated)
+    proxy-net = external shared network (Traefik <-> koha only)
    No host-published ports for Koha services
     Resource-limited: CPU/memory/pids/ulimits
 ```
@@ -179,61 +194,93 @@
 ```
 koha-deploy/
 │
-├── 📄 docker-compose.yaml              # Основна оркестрація сервісів
-├── 📄 .env.example                     # Шаблон конфігурації (SSOT)
-├── 📄 .gitignore                       # git-фільтри (крім .env)
+├── 📄 docker-compose.yml               # Основна оркестрація сервісів (Compose)
+├── 📄 docker-compose.swarm.yml         # Swarm-overlay (secrets, configs, image overrides)
+├── 📄 env.dev.enc                      # SOPS-зашифрований env для dev
+├── 📄 env.prod.enc                     # SOPS-зашифрований env для prod
+├── 📄 IntranetUserJS.js                # Kастомний JS для Intranet (вставляється вручну через UI)
+├── 📄 .gitignore                       # git-фільтри
 │
 ├── 📁 scripts/                         # Операційні скрипти (bash)
 │   ├── verify-env.sh                   # Валідація .env перед запуском
-│   ├── bootstrap-live-configs.sh       # Оркестратор live-патчів Koha
-│   ├── test-smtp.sh                    # Runtime SMTP перевірка
-│   ├── backup.sh                       # Full backup DB + volumes
-│   ├── restore.sh                      # Restore / PITR procedure
-│   ├── collect-docker-logs.sh          # Збір логів з контейнерів
+│   ├── init-volumes.sh                 # Ініціалізація host volumes + ACL
+│   ├── bootstrap-live-configs.sh       # Оркестратор live-патчів Koha (--env-file, --module)
+│   ├── deploy-orchestrator-swarm.sh    # Swarm deploy: init → secret render → deploy → bootstrap
+│   ├── render-versioned-env-secret.sh  # Versioned Docker secrets (env payload, DB, RabbitMQ)
+│   ├── koha-elasticsearch-index-guard.sh # Smart ES index guard при deploy
+│   ├── koha-lockdown-password-prefs.sh # Блокування password sysprefs
+│   ├── backup.sh                       # Full backup DB + volumes (--env prod|dev, rclone offsite)
+│   ├── restore.sh                      # Restore / PITR procedure (--env prod|dev)
+│   ├── test-restore.sh                 # Restore smoke-test у тимчасовий MariaDB container
+│   ├── collect-docker-logs.sh          # Збір логів (--env prod|dev, Swarm mode)
 │   ├── install-collect-logs-timer.sh   # Встановлення systemd timer
-│   ├── check-secrets-hygiene.sh        # Secret scan у commit
-│   ├── check-internal-ports-policy.sh  # Перевірка мережевої політики
+│   ├── check-ports-policy.sh           # Перевірка publish-портів
+│   ├── check-internal-ports-policy.sh  # Перевірка внутрішньої мережевої політики
+│   │
+│   ├── 📁 lib/                         # Спільні runtime helpers
+│   │   ├── autonomous-env.sh           # SOPS decrypt для cron/manual (Category 2)
+│   │   ├── orchestrator-env.sh         # Env resolver для deploy-adjacent scripts (Category 1б)
+│   │   └── docker-runtime.sh           # docker_runtime_exec: compose|swarm adapter
 │   │
 │   └── 📁 patch/                       # Модулі live-конфігу
 │       ├── _patch_common.sh            # Спільні утиліти
 │       ├── patch-koha-conf-xml.sh      # Базова конфігурація
+│       ├── patch-koha-conf-xml-db.sh   # DB credentials (перед іншими модулями)
 │       ├── patch-koha-conf-xml-trusted-proxies.sh # trusted proxies chain
 │       ├── patch-koha-conf-xml-memcached.sh  # Memcached інтеграція
 │       ├── patch-koha-conf-xml-message-broker.sh # RabbitMQ інтеграція
 │       ├── patch-koha-conf-xml-smtp.sh # SMTP конфіг
 │       ├── patch-koha-conf-xml-timezone.sh    # Timezone setup
-│       ├── patch-koha-conf-xml-verify.sh      # Верифікація XML
+│       ├── patch-koha-conf-xml-verify.sh      # Верифікація XML + DB/RabbitMQ credentials
+│       ├── patch-koha-sysprefs-search.sh      # SearchEngine syspref (Elasticsearch|Zebra)
+│       ├── patch-koha-sysprefs-api.sh         # RESTBasicAuth syspref
 │       ├── patch-koha-sysprefs-domain.sh      # OPAC/Staff URL sysprefs
-│       └── patch-koha-templates.sh     # HTML/CSS патчі
+│       ├── patch-koha-sysprefs-oidc.sh        # OIDC sysprefs (--discover/--apply/--verify)
+│       ├── patch-koha-identity-provider.sh    # MS365/OIDC identity_providers table
+│       ├── patch-koha-sysprefs-opac-matomo.sh # Matomo tracking snippet → OPACUserJS
+│       ├── patch-koha-apache-csp-report-only.sh # CSP-Report-Only Apache header
+│       └── patch-koha-templates.sh     # deprecated wrapper → bootstrap-live-configs
 │
 ├── 📁 systemd/                         # Systemd service/timer
 │   ├── koha-deploy-collect-logs.service
 │   └── koha-deploy-collect-logs.timer
 │
-├── 📁 elasticsearch/                   # Local ES Dockerfile
+├── 📁 elasticsearch/                   # Local ES Dockerfile (з analysis-icu)
 │   └── Dockerfile
 ├── 📁 rabbitmq/                        # Local RabbitMQ Dockerfile
-│   └── Dockerfile
+│   ├── Dockerfile
+│   └── enabled_plugins
 ├── 📁 memcached/                       # Local Memcached Dockerfile
 │   └── Dockerfile
 ├── 📁 apache/                          # Managed Apache overlays
-│   └── remoteip.conf                   # Real client IP via CF-Connecting-IP
+│   ├── remoteip.conf                   # Real client IP via CF-Connecting-IP
+│   └── csp-report-only.conf            # Content-Security-Policy-Report-Only header
+│
+├── 📁 docs/                            # Документація
+│   ├── ARCHITECTURE.md                 # Архітектурні правила & обмеження
+│   ├── ROADMAP_PROD.md                 # Development roadmap & priorities
+│   ├── RUNBOOK_DR.md                   # Disaster Recovery procedures
+│   ├── scripts_runbook.md              # Scripts contracts & usage reference
+│   ├── scrypts_refactoring.md          # Refactoring notes
+│   ├── changelogs/                     # Versioned changelog volumes
+│   │   ├── CHANGELOG_2026_VOL_01.md
+│   │   ├── CHANGELOG_2026_VOL_02.md
+│   │   ├── CHANGELOG_2026_VOL_03.md
+│   │   ├── CHANGELOG_2026_VOL_04.md
+│   │   ├── CHANGELOG_2026_VOL_05.md
+│   │   ├── CHANGELOG_2026_VOL_06.md
+│   │   └── CHANGELOG_2026_VOL_07.md (active)
+│   └── snippets/                       # Managed code snippets
+│       └── koha-opac-tracker.js        # Matomo OPAC tracking snippet
+│
+├── 📁 archive/                         # Архів (не редагувати)
+│   └── AGENTS.md                       # New session start guide
 │
 ├── 📁 .github/workflows/               # CI/CD
 │   └── ci-cd-checks.yml                # Lint, test, deploy workflow
 │
-├── 📁 CHANGELOGS/                      # Versioned changelog volumes
-│   ├── CHANGELOG_2026_VOL_01.md
-│   ├── CHANGELOG_2026_VOL_02.md
-│   ├── CHANGELOG_2026_VOL_03.md
-│   └── CHANGELOG_2026_VOL_04.md (active)
-│
 ├── 📄 CHANGELOG.md                     # Changelog index
-├── 📄 ROADMAP_PROD.md                  # Development roadmap & priorities
-├── 📄 ARCHITECTURE.md                  # Архітектурні правила & обмеження
-├── 📄 RUNBOOK_DR.md                    # Disaster Recovery procedures
-├── 📄 AGENTS.md                        # New session start guide
-└── 📄 README.md                        # **ВИ ТУТАМО** (це файл)
+└── 📄 README.md                        # **ВИ ТУТ** (це файл)
 ```
 
 ---
@@ -279,29 +326,38 @@ koha
 
 ### SSOT (Single Source of Truth)
 
-Вся runtime-конфігурація керується трьома файлами:
+Вся runtime-конфігурація керується через SOPS-зашифровані env-файли:
 
-1. **`.env.example`** — еталонний шаблон з усіма змінними та їхніми описами
-2. **`.env`** — локальна конфігурація (git-ignored, не комітиться)
-3. **`docker-compose.yaml`** — сервіси та обробники, що читають з `.env`
+1. **`env.dev.enc`** — SOPS-зашифрований env для dev оточення
+2. **`env.prod.enc`** — SOPS-зашифрований env для production
+3. **`docker-compose.yml`** — Compose-сервіси з env-підстановками
+4. **`docker-compose.swarm.yml`** — Swarm overlay (secrets, configs, image overrides)
+
+> **Розшифрування** відбувається автоматично через `sops --decrypt` у deploy pipeline або `scripts/lib/autonomous-env.sh` для cron/manual сценаріїв. Decrypted env **ніколи не записується в git**.
 
 ### Ключові категорії змінних
 
 | Категорія | Приклади | Де зберігається |
 |---|---|---|
-| **Koha Config** | `KOHA_INSTANCE`, `KOHA_DOMAIN`, `KOHA_TIMEZONE` | `.env` |
-| **Database** | `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_ROOT_PASS` | `.env` (secret) |
-| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH` | `.env` |
-| **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | `.env` (secret) |
-| **Memcached** | `MEMCACHED_SERVERS` | `.env` |
-| **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | `.env` |
-| **Trusted Proxies** | `KOHA_TRUSTED_PROXIES` | `.env` |
-| **Cloudflare** | `CLOUDFLARE_TOKEN` | external tunnel stack / secret store |
-| **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SSL_MODE` | `.env` (secret) |
-| **OIDC Sysprefs** | `KOHA_OIDC_PREF__*`, `KOHA_OIDC_INCLUDE_EMPTY` | `.env` (secret) |
-| **Volume Paths** | `VOL_DB_PATH`, `VOL_KOHA_CONF`, `VOL_KOHA_DATA` | `.env` |
-| **Resource Limits** | `KOHA_MEM_LIMIT`, `DB_CPUS`, `ES_MEM_LIMIT` | `.env` |
-| **Logging** | `LOG_MAX_SIZE`, `LOG_MAX_FILE` | `.env` |
+| **Koha Config** | `KOHA_INSTANCE`, `KOHA_DOMAIN`, `KOHA_TIMEZONE` | env.*.enc |
+| **Database** | `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_ROOT_PASS` | env.*.enc (secret) |
+| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE` | env.*.enc |
+| **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | env.*.enc (secret) |
+| **Memcached** | `MEMCACHED_SERVERS` | env.*.enc |
+| **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | env.*.enc |
+| **Trusted Proxies** | `KOHA_TRUSTED_PROXIES` | env.*.enc |
+| **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SSL_MODE` | env.*.enc (secret) |
+| **OIDC Sysprefs** | `KOHA_OIDC_PREF__*`, `KOHA_OIDC_INCLUDE_EMPTY` | env.*.enc (secret) |
+| **Identity Provider** | `KOHA_IDP_KEY`, `KOHA_IDP_SECRET`, `KOHA_IDP_WELL_KNOWN_URL` | env.*.enc (secret) |
+| **Matomo Analytics** | `MATOMO_BASE_URL`, `MATOMO_SITE_ID`, `MATOMO_TRACKER_URL` | env.*.enc |
+| **CSP** | `CSP_MODE`, `CSP_REPORT_ONLY_DEFAULT_SRC`, `CSP_REPORT_ONLY_SCRIPT_SRC` | env.*.enc |
+| **Backup** | `BACKUP_PATH`, `BACKUP_RCLONE_REMOTE`, `BACKUP_RCLONE_FOLDER`, `BACKUP_RCLONE_RETENTION_DAYS` | env.*.enc |
+| **Monitoring** | `NODE_EXPORTER_TEXTFILE_DIR`, `BACKUP_METRICS_FILE` | env.*.enc |
+| **API** | `KOHA_REST_BASIC_AUTH` | env.*.enc |
+| **Volume Paths** | `VOL_DB_PATH`, `VOL_KOHA_CONF`, `VOL_KOHA_DATA` | env.*.enc |
+| **Resource Limits** | `KOHA_MEM_LIMIT`, `DB_CPUS`, `ES_MEM_LIMIT` | env.*.enc |
+| **Logging** | `LOG_MAX_SIZE`, `LOG_MAX_FILE` | env.*.enc |
+| **Swarm** | `STACK_NAME`, `ORCHESTRATOR_ES_GUARD`, `ORCHESTRATOR_SWARM_BUILD_SERVICES` | env.*.enc |
 
 ### Live-конфіг патчі
 
@@ -309,26 +365,34 @@ koha
 
 ```bash
 # Усі модулі
-bash scripts/bootstrap-live-configs.sh --all
+bash scripts/bootstrap-live-configs.sh --env-file <env_file> --all
 
 # Вибіркові модулі
-bash scripts/bootstrap-live-configs.sh --modules smtp,memcached
+bash scripts/bootstrap-live-configs.sh --env-file <env_file> --modules smtp,memcached
 
 # Список підтримуваних модулів
-bash scripts/bootstrap-live-configs.sh --help
+bash scripts/bootstrap-live-configs.sh --list-modules
+
+# Dry-run (без застосування)
+bash scripts/bootstrap-live-configs.sh --env-file <env_file> --module db --dry-run
 ```
 
-**Модулі (в `scripts/patch/`):**
+**Модулі (в `scripts/patch/`), порядок виконання:**
+- `db` — DB credentials у `koha-conf.xml` (виконується **першим**)
 - `patch-koha-conf-xml.sh` — базова Koha конфігурація
-- `patch-koha-conf-xml-memcached.sh` — Memcached інтеграція
-- `patch-koha-conf-xml-message-broker.sh` — RabbitMQ інтеграція
-- `patch-koha-conf-xml-smtp.sh` — SMTP параметри
-- `patch-koha-conf-xml-timezone.sh` — Часовий пояс
-- `patch-koha-conf-xml-trusted-proxies.sh` — trusted proxies chain у koha-conf.xml
-- `patch-koha-sysprefs-domain.sh` — OPAC/Staff URL sysprefs з env
-- `patch-koha-identity-provider.sh` — Identity Provider (MS365/OIDC) з env у таблиці `identity_providers`/`identity_provider_domains`
-- `patch-koha-sysprefs-oidc.sh` — OIDC sysprefs discovery/apply/verify з env (`KOHA_OIDC_PREF__*`)
-- `patch-koha-templates.sh` — deprecated wrapper на bootstrap-live-configs
+- `search-prefs` — `systempreferences.SearchEngine` (Elasticsearch|Zebra) + cache flush
+- `api-prefs` — `systempreferences.RESTBasicAuth` + cache flush
+- `domain-prefs` — OPAC/Staff URL sysprefs (`OPACBaseURL`, `staffClientBaseURL`)
+- `oidc-prefs` — OIDC sysprefs (--discover/--apply/--verify з `KOHA_OIDC_PREF__*`)
+- `identity-provider` — MS365/OIDC `identity_providers` + `identity_provider_domains`
+- `memcached` — Memcached інтеграція
+- `message-broker` — RabbitMQ інтеграція
+- `smtp` — SMTP параметри
+- `timezone` — Часовий пояс
+- `trusted-proxies` — trusted proxies chain у `koha-conf.xml`
+- `opac-matomo` — Matomo tracking snippet → `systempreferences.OPACUserJS`
+- `csp-report-only` — генерація `apache/csp-report-only.conf` з env
+- `patch-koha-conf-xml-verify.sh` — верифікація XML + DB/RabbitMQ credentials
 
 ---
 
@@ -338,10 +402,10 @@ bash scripts/bootstrap-live-configs.sh --help
 
 | Принцип | Реалізація |
 |---|---|
-| **Secrets не комітяться** | `.env` в `.gitignore`; CI checks блокують розповсюджування |
+| **Secrets не комітяться** | `env.*.enc` SOPS-зашифровані; CI checks gitleaks; безпечний dotenv-parser без `source`/eval |
 | **Least Privilege** | `cap_drop: ALL`, `security_opt: no-new-privileges`, мінімальні UNIX-права |
-| **Network Isolation** | Єдина внутрішня docker-мережа; немає published host ports |
-| **Edge via Gateway** | External Cloudflare Tunnel -> Traefik -> Koha |
+| **Network Isolation** | `koha` на двох мережах: `kohanet` (сайдкари) + `proxy-net` (Traefik); sidecars відізольовані від Traefik |
+| **Edge via Gateway** | External Cloudflare Tunnel -> Traefik (proxy-net) -> koha |
 | **Container Hardening** | `pids_limit`, `ulimits`, memory/cpu limits, seccomp-profiles (можна додати) |
 | **Logging Security** | Логи вивантажуються наприкінці; не залишаються в контейнері |
 | **Image Scanning** | Триви config gate в CI; рекомендовано image scan |
@@ -350,14 +414,15 @@ bash scripts/bootstrap-live-configs.sh --help
 ### Secrets Management
 
 **Недопустимо (❌):**
-- Комітити `.env` з реальними значеннями
-- Зберігати паролі в `docker-compose.yaml`
+- Комітити `env.dev.enc` / `env.prod.enc` без SOPS-шифрування
+- Зберігати паролі в `docker-compose.yml` або git
+- Використовувати `source`/eval для env-файлів (inject injection risk)
 
 **Допустимо (✅):**
-- Використовувати `.env.example` як еталон
-- Передавати secrets через CI/CD secrets (GitHub Secrets)
+- `env.*.enc` комітити (SOPS-зашифровані, безпечно)
+- Розшифровувати через SOPS Age у `/dev/shm` з `trap` cleanup
+- Передавати secrets через CI/CD secrets (GitHub Secrets) + versioned Docker secrets
 - Ротація паролів за розписанням
-- Аудит доступу до `.env`
 
 ### Переповідні точки безпеки
 
@@ -390,12 +455,12 @@ bash --version          # Bash 4.0+
    cd koha-deploy
    ```
 
-2. **Скопіювати шаблон конфігурації:**
+2. **Розшифрувати та скопіювати env:**
    ```bash
-   cp .env.example .env
+   sops --decrypt env.dev.enc > .env   # для локального dev
    ```
 
-3. **Редагувати `.env`** під ваше оточення:
+3. **Редагувати `.env`** під ваше оточення (якщо потрібно):
    ```bash
    nano .env
    ```
@@ -523,38 +588,38 @@ curl -I -H 'Host: koha.pinokew.buzz' http://127.0.0.1:8080/
 
 **Full backup (DB + volumes):**
 ```bash
-bash scripts/backup.sh
+bash scripts/backup.sh --env prod         # production
+bash scripts/backup.sh --env dev --dry-run # dry-run (no write)
 ```
 
-**Обов'язково перевіряє:**
-- Наявність директорій томів
-- Доступність DB
-- Достатньо місця на диску
-- Контрольні суми (для перевірки цілісності)
+**Offsite копіювання (rclone):**
+- `BACKUP_RCLONE_REMOTE` + `BACKUP_RCLONE_FOLDER` в env вмикають offsite upload
+- `BACKUP_RCLONE_RETENTION_DAYS` керує retention на remote (дефолт `0` = вимкнено)
+- Локальний `BACKUP_RETENTION_DAYS` й `BACKUP_RCLONE_RETENTION_DAYS` незалежні
 
-**Результат:**
-```
-backup_<timestamp>.tar.gz           # Архів (у `.env` VOL__BACKUP_PATH)
-backup_<timestamp>.tar.gz.sha256    # Контрольна сума
-backup_<timestamp>.metadata.json    # Метадані backup
+**Monitoring metrics:**
+- `backup.sh` пише `koha_backup.prom` у `${NODE_EXPORTER_TEXTFILE_DIR}`
+
+**Restore smoke-test:**
+```bash
+bash scripts/test-restore.sh --env prod   # імпорт SQL dump у temp MariaDB, не торкає prod
 ```
 
 ### Restore
 
-**Dry-run (без особливих змін):**
+**Dry-run (без змін):**
 ```bash
-bash scripts/restore.sh --dry-run --backup-file backup_<timestamp>.tar.gz
+bash scripts/restore.sh --env prod --dry-run
 ```
 
 **Full restore (PITR):**
 ```bash
-bash scripts/restore.sh --backup-file backup_<timestamp>.tar.gz
+bash scripts/restore.sh --env prod
 ```
 
 **Потім:**
 ```bash
-docker compose up -d --build
-bash scripts/bootstrap-live-configs.sh --all
+bash scripts/bootstrap-live-configs.sh --env-file <env_file> --all
 ```
 
 ### Логування та Діагностика
@@ -584,38 +649,70 @@ docker compose logs -f db               # Тільки MariaDB
 
 ## 📡 Деплой на production
 
-> Детальніше див. [ARCHITECTURE.md](ARCHITECTURE.md#7-cicd-архітектура) і [RUNBOOK_DR.md](RUNBOOK_DR.md).
+> Детальніше див. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) і [docs/RUNBOOK_DR.md](docs/RUNBOOK_DR.md).
 
-### Manual Deploy (на серверу)
+### Manual Deploy (Compose, на сервері)
 
 **Передумови:**
 - SSH доступ до сервера
 - Git доступ до `main` branch
-- Вміст `.env` на серверу налаштований
+- `env.prod.enc` у корені репо, `sops` + Age key налаштовані
 
 **Процедура:**
 
 ```bash
 # SSH на сервер
 ssh user@production.server
-cd /opt/koha-deploy
+cd /opt/Koha/koha-deploy
 
 # Оновити код
 git fetch origin
 git reset --hard origin/main
 
 # Оновити сервіси
-docker compose pull
-docker compose build --no-cache
-docker compose up -d --remove-orphans
+docker compose -f docker-compose.yml pull
+docker compose -f docker-compose.yml build --no-cache
+docker compose -f docker-compose.yml up -d --remove-orphans
 
 # Застосувати конфіги
-bash scripts/bootstrap-live-configs.sh --all
+bash scripts/bootstrap-live-configs.sh --env-file <(sops -d env.prod.enc) --all
 
 # Перевірити health
 bash scripts/verify-env.sh
-docker compose ps
+docker compose -f docker-compose.yml ps
 ```
+
+### Swarm Deploy (Production Orchestrator)
+
+**Передумови:**
+- Docker Swarm проініціалізовано (`docker swarm init`)
+- `env.prod.enc` + SOPS Age key
+- Versioned Docker secrets створюються автоматично
+
+**Ідеологія Swarm deploy:**
+```
+SECRET RENDER  ->  INIT VOLUMES  ->  STACK DEPLOY  ->  RECONCILE
+    |                  |                  |                |
+ versioned         host dirs           docker stack     smart update
+ Docker secrets    ACL setup           deploy           (force only
+ (env payload,     BACKUP_PATH                          if needed)
+ DB, MQ)           KOHA_CONF
+```
+
+**Запуск:**
+```bash
+SERVER_ENV=prod bash scripts/deploy-orchestrator-swarm.sh
+# або
+bash scripts/deploy-orchestrator-swarm.sh --env prod
+
+# Dry-run (без передачі на Docker)
+ORCHESTRATOR_MODE=noop bash scripts/deploy-orchestrator-swarm.sh
+```
+
+**Post-deploy (виконується автоматично оркестратором):**
+1. `bootstrap-live-configs.sh --all` (в Swarm runtime mode)
+2. `koha-elasticsearch-index-guard.sh` (smart reindex при порожньому volume)
+3. `koha-lockdown-password-prefs.sh` (OPAC password reset заблоковано)
 
 ### Automated Deploy (GitHub Actions)
 
@@ -628,7 +725,9 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 - Shellcheck (bash linter)
 - Docker Compose config validation
 - Secret hygiene check (gitleaks)
+- Trivy config scan (HIGH/CRITICAL, без image scan)
 - Internal ports policy check
+- `paths-ignore` фільтр: `**.md`, `.gitignore`, `archive/**` — пропускають CI при doc-only змінах
 
 **Deploy (CD):**
 - SSH connection до сервера (з GitHub Secrets)
@@ -811,18 +910,19 @@ ls -lh $(docker inspect koha | jq -r '.[0].LogPath' | xargs dirname)
 
 ### Для нової сесії (обов'язково прочитати)
 
-1. **[AGENTS.md](AGENTS.md)** — guide для нової сесії
-2. **[ROADMAP_PROD.md](ROADMAP_PROD.md)** — текущі пріоритети і що буде далі
-3. **[ARCHITECTURE.md](ARCHITECTURE.md)** — правила & обмеження проєкту
+1. **[archive/AGENTS.md](archive/AGENTS.md)** — guide для нової сесії
+2. **[docs/ROADMAP_PROD.md](docs/ROADMAP_PROD.md)** — текущі пріоритети і що буде далі
+3. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — правила & обмеження проєкту
 
 ### Для операцій та коли щось ламається
 
-- **[RUNBOOK_DR.md](RUNBOOK_DR.md)** — Disaster Recovery процедури
-- **[CHANGELOG.md](CHANGELOG.md)** − індекс змін (у томах у `CHANGELOGS/`)
+- **[docs/RUNBOOK_DR.md](docs/RUNBOOK_DR.md)** — Disaster Recovery процедури
+- **[docs/scripts_runbook.md](docs/scripts_runbook.md)** — Scripts contracts & usage reference
+- **[CHANGELOG.md](CHANGELOG.md)** — індекс змін (у томах у `docs/changelogs/`)
 
 ### Для розробленння та fork'ів
 
-- **archive/README.example.md** — template для новых проектів (не редагувати)
+- **archive/README.example.md** — template для нових проектів (не редагувати)
 - **.github/workflows/ci-cd-checks.yml** — CI/CD логіка
 
 ### Зовнішні ресурси
@@ -852,23 +952,20 @@ ls -lh $(docker inspect koha | jq -r '.[0].LogPath' | xargs dirname)
 
 ## 📋 Поточний Changelog
 
-> Див. [CHANGELOG.md](CHANGELOG.md) для індексу томів. Активний том: [CHANGELOG_2026_VOL_04.md](CHANGELOGS/CHANGELOG_2026_VOL_04.md)
+> Див. [CHANGELOG.md](CHANGELOG.md) для індексу томів. Активний том: [docs/changelogs/CHANGELOG_2026_VOL_07.md](docs/changelogs/CHANGELOG_2026_VOL_07.md)
 
-**Останні оновлення (краї Vol 04):**
-- ✅ CI/CD workflow спрощено (fast-core checks)
-- ✅ Trivy config gate додано
-- ✅ README архітектурні деталі оновлено
-- 🔄 Observability: логи, базові метрики готові; алерти в дорі
+**Останні оновлення (VOL_05–VOL_07):**
+- ✅ Scripts refactoring: безпечний SOPS env-flow для Категорій 1а/1б/2 (без `source`/eval)
+- ✅ Swarm deploy orchestrator з versioned Docker secrets (env payload, DB, RabbitMQ)
+- ✅ Smart Elasticsearch index guard при deploy на порожньому volume
+- ✅ `search-prefs` + `api-prefs` bootstrap модулі (SearchEngine, RESTBasicAuth)
+- ✅ Backup offsite через rclone + окремий retention + textfile metrics
+- ✅ `test-restore.sh` — restore smoke-test у тимчасову MariaDB (не торкає prod)
+- ✅ `init-volumes.sh` ініціалізує `BACKUP_PATH` з ownership/ACL
+- 🔄 CSP enforcement: `report-only` режим, tuning в прогресі
 
 ---
 
-**Версія документу:** 2026 Q1  
-**Останнє оновлення:** 2026-03-03  
+**Версія документу:** 2026 Q2  
+**Останнє оновлення:** 2026-05-17  
 **Status:** ✅ Production Ready
-4. `CHANGELOG.md`
-
-## Safety Notes
-
-1. Do not commit real secrets to git.
-2. Prefer image digest pin for `KOHA_IMAGE` in production.
-3. Avoid manual in-container config edits as a permanent solution.

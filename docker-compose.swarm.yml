@@ -97,6 +97,40 @@ services:
         constraints:
           - node.labels.app_zone == manager
 
+  koha-es-indexer:
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    depends_on: !reset null
+    env_file: !reset []
+    environment: !override
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      TZ: ${KOHA_TIMEZONE}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
+      MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
+      KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 0
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
   rabbitmq:
     build: !reset null
     cpus: !reset null

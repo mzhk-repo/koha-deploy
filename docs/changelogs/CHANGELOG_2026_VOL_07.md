@@ -209,3 +209,93 @@
   - `bash scripts/test-restore.sh --help` - OK;
   - `SERVER_ENV=prod bash scripts/test-restore.sh --env prod` - OK, використано backup set `/data/backup/koha/2026-05-10_11-54-21`, SQL dump імпортовано у тимчасову MariaDB DB `koha_restore_smoke`, перевірено 277 таблиць;
   - textfile metrics створені на host: `/data/node-exporter-textfile/koha_backup.prom`, `/data/node-exporter-textfile/koha_restore_smoke.prom`, обидва status `1`.
+
+
+### 33) Elasticsearch indexer: винесено daemon в окремий supervised сервіс
+
+- Контекст:
+  - `koha-es-indexer --status library` показував `ES indexing daemon not running`;
+  - RabbitMQ черга `koha_library-elastic_index` мала повідомлення без consumer;
+  - `SearchEngine=Elasticsearch`, індекси існували, але auto-indexing не обробляв queued jobs;
+  - one-shot старт `koha-es-indexer` у Koha container міг падати до готовності RabbitMQ/ES/DNS і не мав Swarm/s6 supervision.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+  - `scripts/koha-elasticsearch-index-guard.sh`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - додано окремий довгоживучий сервіс `koha-es-indexer`;
+  - сервіс запускає `es_indexer_daemon.pl` у foreground через `runuser --preserve-environment` під `${KOHA_INSTANCE}-koha`;
+  - перед стартом daemon чекає `koha-conf.xml`, DB, Elasticsearch і RabbitMQ STOMP;
+  - додано `KOHA_ES_INDEXER_BATCH_SIZE` і `KOHA_ES_INDEXER_WAIT_TIMEOUT`;
+  - ES guard перезапускає managed service `koha-es-indexer`, а legacy in-container daemon лишається fallback.
+
+- Runtime-діагностика:
+  - до ручного старту: `koha_library-elastic_index` мав `5` ready messages і `0` consumers;
+  - після `koha-es-indexer --start library`: `koha_library-elastic_index` став `0` ready messages і `1` consumer.
+
+### 34) Deploy fix: прибрано false-positive env keys з `koha-es-indexer` command
+
+- Контекст:
+  - `verify-env.sh` сканує `docker-compose.yml` на `${VAR}` і вимагає, щоб усі такі ключі були в `.env.example`;
+  - inline shell нового `koha-es-indexer` сервісу містив runtime `${...}` expressions, які не є compose env keys;
+  - deploy падав на missing keys: `deadline`, `es_host`, `KOHA_CONF`, `KOHA_HOME`, `label`, `PERL5LIB`, `SECONDS`.
+
+- Оновлено:
+  - `docker-compose.yml`
+
+- Зміни:
+  - runtime shell у `koha-es-indexer` переписано без `${...}` placeholders;
+  - defaults для `KOHA_HOME` і `PERL5LIB` задано явно;
+  - readiness checks для Elasticsearch/RabbitMQ виконуються через Perl `IO::Socket::INET` і `%ENV`, щоб не конфліктувати з compose env validation.
+
+- Перевірено:
+  - `bash scripts/verify-env.sh --example-only` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml config` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
+  - `git diff --check -- docker-compose.yml` - OK.
+
+### 35) Deploy fix: `koha-es-indexer` більше не залежить від Koha container user bootstrap
+
+- Контекст:
+  - Swarm update `koha_koha-es-indexer` падав з `task: non-zero exit (1)`;
+  - логи task показали `read: arg count` через duplicated secret-entrypoint і `runuser: user library-koha does not exist`;
+  - окремий container `koha-es-indexer` не проходить Koha setup pipeline основного container, тому instance user/group треба створювати ідемпотентно всередині самого сервісу.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+
+- Зміни:
+  - прибрано окремий Swarm entrypoint і secret payload mount з `koha-es-indexer`;
+  - daemon покладається на live `koha-conf.xml`, де DB/RabbitMQ credentials уже пропатчені bootstrap-модулями;
+  - перед запуском `es_indexer_daemon.pl` сервіс ідемпотентно створює `${KOHA_INSTANCE}-koha` user/group з `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID`;
+  - додано default `KOHA_INSTANCE_UID=1000`, `KOHA_INSTANCE_GID=1000` у `.env.example`.
+
+- Перевірено:
+  - `bash scripts/verify-env.sh --example-only` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml config` - OK;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` - OK;
+  - `git diff --check -- docker-compose.yml docker-compose.swarm.yml .env.example docs/changelogs/CHANGELOG_2026_VOL_07.md` - OK.
+
+### 36) Deploy fix: повернено `app_env_payload` secret для основного Koha service
+
+- Контекст:
+  - після спрощення `koha-es-indexer` помилково зник `app_env_payload` secret mount у `koha_koha`;
+  - `koha_koha` падав із `cannot open /run/secrets/app_env_payload` під час Swarm reconcile.
+
+- Оновлено:
+  - `docker-compose.swarm.yml`
+
+- Зміни:
+  - `app_env_payload` secret mount повернено тільки для основного `koha` service;
+  - `koha-es-indexer` лишився без secret mount і читає runtime credentials через live `koha-conf.xml`.
+
+- Перевірено:
+  - redeploy з `env.dev.enc` завершився `Swarm deploy completed`;
+  - `koha_koha` running;
+  - `koha_koha-es-indexer` running, всередині працює `es_indexer_daemon.pl` під `library-koha`.

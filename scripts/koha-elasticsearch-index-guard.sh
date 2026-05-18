@@ -191,6 +191,28 @@ restart_es_indexer() {
     return 0
   fi
 
+  case "$(docker_runtime_mode)" in
+    swarm)
+      if docker service inspect "${STACK_NAME:-koha}_koha-es-indexer" >/dev/null 2>&1; then
+        docker service update --force "${STACK_NAME:-koha}_koha-es-indexer" >/dev/null
+        docker_runtime_wait_for_swarm_container koha-es-indexer "${WAIT_TIMEOUT}" \
+          || die "koha-es-indexer service did not start within timeout"
+        log "Managed koha-es-indexer service restarted"
+        return 0
+      fi
+      ;;
+    compose)
+      local indexer_cid
+      indexer_cid="$(docker compose --env-file "${ENV_FILE}" -f "${KOHA_COMPOSE_FILE}" ps -q koha-es-indexer 2>/dev/null || true)"
+      if [ -n "${indexer_cid}" ]; then
+        docker compose --env-file "${ENV_FILE}" -f "${KOHA_COMPOSE_FILE}" restart koha-es-indexer >/dev/null
+        log "Managed koha-es-indexer service restarted"
+        return 0
+      fi
+      ;;
+  esac
+
+  warn "Managed koha-es-indexer service not found; falling back to legacy in-container daemon"
   docker_runtime_exec koha koha-es-indexer --restart "${KOHA_INSTANCE}"
   docker_runtime_exec koha koha-es-indexer --status "${KOHA_INSTANCE}"
 }
