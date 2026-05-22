@@ -137,6 +137,61 @@ es_json_count() {
   printf '%s\n' "${count}"
 }
 
+
+koha_jobs_notification_method() {
+  local method
+
+  method="$(koha_sql_scalar "SELECT COALESCE(value,'') FROM systempreferences WHERE variable='JobsNotificationMethod';")"
+  printf '%s\n' "${method:-STOMP}"
+}
+
+koha_elastic_queue_name() {
+  local namespace
+
+  namespace="$(docker_runtime_exec koha perl -I/usr/share/koha/lib -MC4::Context -e 'print C4::Context->config("memcached_namespace") // "";' \
+    | tr -d '\r' \
+    | tail -n 1)"
+  printf '%s-elastic_index\n' "${namespace:-koha_${KOHA_INSTANCE}}"
+}
+
+rabbitmq_queue_consumers() {
+  local queue="$1"
+  local consumers
+
+  consumers="$(docker_runtime_exec rabbitmq rabbitmqctl list_queues --quiet name consumers 2>/dev/null \
+    | awk -v queue="${queue}" '$1 == queue { print $2 }' \
+    | tail -n 1)"
+  if [[ "${consumers}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${consumers}"
+  else
+    printf '0\n'
+  fi
+}
+
+wait_for_es_indexer_consumer() {
+  local notification_method queue consumers elapsed=0
+
+  notification_method="$(koha_jobs_notification_method)"
+  if [ "${notification_method}" != "STOMP" ]; then
+    log "Skip RabbitMQ consumer check (JobsNotificationMethod=${notification_method})"
+    return 0
+  fi
+
+  queue="$(koha_elastic_queue_name)"
+  log "Waiting for koha-es-indexer RabbitMQ consumer on ${queue} (timeout=${WAIT_TIMEOUT}s)"
+  while [ "${elapsed}" -lt "${WAIT_TIMEOUT}" ]; do
+    consumers="$(rabbitmq_queue_consumers "${queue}")"
+    if [ "${consumers}" -gt 0 ]; then
+      log "koha-es-indexer RabbitMQ consumer is ready (${queue} consumers=${consumers})"
+      return 0
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+
+  die "koha-es-indexer did not attach a RabbitMQ consumer to ${queue} within timeout"
+}
+
 wait_for_elasticsearch() {
   local elapsed=0 status
 
@@ -202,6 +257,7 @@ restart_es_indexer() {
         docker service update --force "${STACK_NAME:-koha}_koha-es-indexer" >/dev/null
         docker_runtime_wait_for_swarm_container koha-es-indexer "${WAIT_TIMEOUT}" \
           || die "koha-es-indexer service did not start within timeout"
+        wait_for_es_indexer_consumer
         log "Managed koha-es-indexer service restarted"
         return 0
       fi
@@ -211,6 +267,7 @@ restart_es_indexer() {
       indexer_cid="$(docker compose --env-file "${ENV_FILE}" -f "${KOHA_COMPOSE_FILE}" ps -q koha-es-indexer 2>/dev/null || true)"
       if [ -n "${indexer_cid}" ]; then
         docker compose --env-file "${ENV_FILE}" -f "${KOHA_COMPOSE_FILE}" restart koha-es-indexer >/dev/null
+        wait_for_es_indexer_consumer
         log "Managed koha-es-indexer service restarted"
         return 0
       fi
@@ -220,6 +277,7 @@ restart_es_indexer() {
   warn "Managed koha-es-indexer service not found; falling back to legacy in-container daemon"
   docker_runtime_exec koha koha-es-indexer --restart "${KOHA_INSTANCE}"
   docker_runtime_exec koha koha-es-indexer --status "${KOHA_INSTANCE}"
+  wait_for_es_indexer_consumer
 }
 
 allowed_lag() {
