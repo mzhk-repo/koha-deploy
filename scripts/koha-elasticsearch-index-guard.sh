@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Script Purpose: Verify Koha Elasticsearch indexes after deploy and rebuild only when it is safe and necessary.
-# Usage: ./scripts/koha-elasticsearch-index-guard.sh [--env-file FILE] [--wait-timeout SEC] [--dry-run]
+# Usage: ./scripts/koha-elasticsearch-index-guard.sh [--env-file FILE] [--wait-timeout SEC] [--dry-run] [--reindex-force]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,6 +8,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${ENV_FILE:-}"
 WAIT_TIMEOUT=300
 DRY_RUN=false
+REINDEX_FORCE=false
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
@@ -21,6 +22,7 @@ Options:
   --env-file FILE       Path to env file (default: ORCHESTRATOR_ENV_FILE, fallback ./.env for dev)
   --wait-timeout SEC    Wait timeout for Elasticsearch availability (default: 300)
   --dry-run             Print intended rebuild action without running it
+  --reindex-force       Force a full delete/rebuild of all Elasticsearch records
   --help                Show help
 
 Environment:
@@ -56,6 +58,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      ;;
+    --reindex-force)
+      REINDEX_FORCE=true
       ;;
     --help|-h)
       usage
@@ -310,8 +315,12 @@ main() {
   biblios_index="koha_${KOHA_INSTANCE}_biblios"
   authorities_index="koha_${KOHA_INSTANCE}_authorities"
 
-  if [ "${ORCHESTRATOR_ES_GUARD}" = "force" ]; then
-    run_rebuild "forced by ORCHESTRATOR_ES_GUARD=force" delete
+  if [ "${ORCHESTRATOR_ES_GUARD}" = "force" ] || ${REINDEX_FORCE}; then
+    if ${REINDEX_FORCE}; then
+      run_rebuild "forced by --reindex-force" delete
+    else
+      run_rebuild "forced by ORCHESTRATOR_ES_GUARD=force" delete
+    fi
     restart_es_indexer
     exit 0
   fi
