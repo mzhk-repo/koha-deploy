@@ -38,3 +38,19 @@
 - Зміни:
   - readiness `koha-es-indexer` перевіряє реальне Koha STOMP-підключення через `Koha::BackgroundJob->connect`, а не лише TCP-порт RabbitMQ;
   - guard після restart managed/legacy indexer чекає RabbitMQ consumer на `${memcached_namespace}-elastic_index` і падає з помилкою, якщо daemon не підписався на queue.
+
+### 4) Elasticsearch indexer: додано watchdog STOMP-зʼєднання daemon
+
+- Контекст:
+  - після redeploy `koha-es-indexer` міг мати живий `es_indexer_daemon.pl`, але без активного STOMP-зʼєднання до RabbitMQ;
+  - RabbitMQ показував `consumers=0` для `koha_library-elastic_index`, а нові `background_jobs` лишались у `new`.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+
+- Зміни:
+  - `koha-es-indexer` тепер запускає `es_indexer_daemon.pl` через wrapper-watchdog;
+  - watchdog перезапускає daemon, якщо STOMP-зʼєднання до RabbitMQ відсутнє довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`;
+  - додано керовані параметри `KOHA_ES_INDEXER_MONITOR_INTERVAL` і `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`.

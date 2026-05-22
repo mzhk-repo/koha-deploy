@@ -146,9 +146,50 @@ services:
         wait_until "RabbitMQ STOMP" runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
           perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $$conn=Koha::BackgroundJob->connect; exit 1 unless $$conn; $$conn->disconnect; exit 0'
 
-        exec runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
-          /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
-          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE"
+        jobs_notification_method() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MC4::Context -e "print C4::Context->preference(q(JobsNotificationMethod)) // q(STOMP);"
+        }
+
+        has_stomp_connection() {
+          ss -tan 2>/dev/null | awk -v port=":$${MB_PORT:-61613}" "\$$1 == \"ESTAB\" && \$$5 ~ port { found=1 } END { exit(found ? 0 : 1) }"
+        }
+
+        start_indexer() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
+            --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE"
+        }
+
+        if [ "$$(jobs_notification_method)" != "STOMP" ]; then
+          start_indexer
+          exit 0
+        fi
+
+        while true; do
+          start_indexer &
+          indexer_pid="$$!"
+          missing_since=""
+
+          while kill -0 "$$indexer_pid" 2>/dev/null; do
+            if has_stomp_connection; then
+              missing_since=""
+            else
+              if [ -z "$$missing_since" ]; then
+                missing_since="$$SECONDS"
+              elif [ $$((SECONDS - missing_since)) -ge "$$KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS" ]; then
+                echo "ERROR: es_indexer_daemon has no STOMP connection for $$KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS seconds; restarting" >&2
+                kill "$$indexer_pid" 2>/dev/null || true
+                wait "$$indexer_pid" 2>/dev/null || true
+                break
+              fi
+            fi
+            sleep "$$KOHA_ES_INDEXER_MONITOR_INTERVAL"
+          done
+
+          wait "$$indexer_pid" 2>/dev/null || true
+          sleep 3
+        done
     restart: unless-stopped
     logging:
       driver: json-file
@@ -183,6 +224,8 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
+      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-5}
+      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-30}
     depends_on:
       db:
         condition: service_healthy
