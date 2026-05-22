@@ -321,7 +321,7 @@ koha-es-indexer
 | Сервіс | Memory | CPU | PID Limit |
 |---|---|---|---|
 | **koha** | 2 GB (default) | 1.50 | 1024 |
-| **koha-es-indexer** | 1 GB (default) | 0.50 | 512 |
+| **koha-es-indexer** | 512 MB (default) | 0.50 | 512 |
 | **db** | 2 GB (default) | 1.50 | 1024 |
 | **es** | 1 GB (default) | 1.00 | 1024 |
 | **rabbitmq** | 512 MB (default) | 1.00 | 1024 |

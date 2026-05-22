@@ -54,3 +54,25 @@
   - `koha-es-indexer` тепер запускає `es_indexer_daemon.pl` через wrapper-watchdog;
   - watchdog перезапускає daemon, якщо STOMP-зʼєднання до RabbitMQ відсутнє довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`;
   - додано керовані параметри `KOHA_ES_INDEXER_MONITOR_INTERVAL` і `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`.
+
+### 5) Elasticsearch indexer: замінено watchdog на crash-only foreground daemon
+
+- Контекст:
+  - watchdog перевіряв STOMP-зʼєднання через `ss`, але в контейнері `ss` недоступний або не показує потрібне зʼєднання;
+  - перевірка постійно повертала false, watchdog стартував новий daemon, а старий Perl child міг лишатися живим;
+  - у Swarm для `koha_koha-es-indexer` не було застосованого hard memory limit.
+
+- Оновлено:
+  - `docker-compose.yml`
+  - `docker-compose.swarm.yml`
+  - `.env.example`
+  - `CHANGELOG.md`
+  - `README.md`
+  - `docs/scripts_runbook.md`
+
+- Зміни:
+  - прибрано watchdog-loop і `ss`-перевірку з `koha-es-indexer`;
+  - `es_indexer_daemon.pl` запускається у foreground через `exec runuser`, тому завершення daemon завершує контейнер;
+  - readiness лишив Koha-level STOMP connect через `Koha::BackgroundJob->connect`, а TCP pre-flight для Elasticsearch/RabbitMQ виконується через Bash `/dev/tcp`;
+  - дефолтний memory limit indexer знижено до `512m`;
+  - у Swarm додано `deploy.resources.limits` для `koha-es-indexer`.
