@@ -95,7 +95,10 @@ example_keys_file="${tmp_dir}/example.keys"
 parse_keys_strict "${EXAMPLE_FILE}" | sort -u > "${example_keys_file}"
 
 compose_keys_file="${tmp_dir}/compose.keys"
-grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*' "${COMPOSE_FILE}" | sed 's/^..//' | sort -u > "${compose_keys_file}"
+sed 's/\$\${/ESCAPED_COMPOSE_RUNTIME_VAR{/g' "${COMPOSE_FILE}" \
+  | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*' \
+  | sed 's/^..//' \
+  | sort -u > "${compose_keys_file}"
 
 missing_compose_keys="${tmp_dir}/missing.compose.keys"
 comm -23 "${compose_keys_file}" "${example_keys_file}" > "${missing_compose_keys}" || true

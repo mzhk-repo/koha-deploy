@@ -76,3 +76,17 @@
   - readiness лишив Koha-level STOMP connect через `Koha::BackgroundJob->connect`, а TCP pre-flight для Elasticsearch/RabbitMQ виконується через Bash `/dev/tcp`;
   - дефолтний memory limit indexer знижено до `512m`;
   - у Swarm додано `deploy.resources.limits` для `koha-es-indexer`.
+
+### 6) Deploy validation: `verify-env.sh` більше не плутає runtime Bash-змінні з Compose env keys
+
+- Контекст:
+  - після переходу `koha-es-indexer` на `/dev/tcp` у inline Bash зʼявилась локальна runtime-змінна `$${endpoint...}`;
+  - `scripts/verify-env.sh` шукав `${...}` напряму в compose-файлі й помилково вимагав `endpoint` у `.env.example`.
+
+- Оновлено:
+  - `scripts/verify-env.sh`
+  - `docs/changelogs/CHANGELOG_2026_VOL_08.md`
+
+- Зміни:
+  - перед витягуванням Compose env keys валідатор ігнорує escaped runtime-послідовності `$${...}`;
+  - `.env.example` не поповнюється службовими локальними Bash-змінними.
