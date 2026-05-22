@@ -90,3 +90,22 @@
 - Зміни:
   - перед витягуванням Compose env keys валідатор ігнорує escaped runtime-послідовності `$${...}`;
   - `.env.example` не поповнюється службовими локальними Bash-змінними.
+
+### 7) Swarm deploy: збережено string-тип для `deploy.resources.limits.cpus`
+
+- Контекст:
+  - `docker compose config` нормалізував `deploy.resources.limits.cpus` у число;
+  - `docker stack deploy` відхиляв manifest з помилкою `services.koha-es-indexer.deploy.resources.limits.cpus must be a string`.
+
+- Оновлено:
+  - `scripts/deploy-orchestrator-swarm.sh`
+  - `docs/changelogs/CHANGELOG_2026_VOL_08.md`
+
+- Зміни:
+  - перед `docker stack deploy` rendered manifest нормалізується так, щоб numeric `cpus:` значення були рядками.
+
+- Перевірено:
+  - `scripts/deploy-orchestrator-swarm.sh` з `env.dev.enc` завершився `Swarm deploy completed`;
+  - `koha_koha-es-indexer` має Swarm limits `NanoCPUs=500000000`, `MemoryBytes=536870912`;
+  - running container має 1 `runuser` і 1 `es_indexer_daemon.pl`, RAM близько 174 MiB із 512 MiB, PIDs=2;
+  - service spec містить foreground `exec runuser ... es_indexer_daemon.pl`, без watchdog-loop і без `ss`.

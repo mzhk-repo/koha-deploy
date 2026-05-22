@@ -398,7 +398,9 @@ deploy_swarm() {
     -f "${swarm_file}" \
     config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" > "${DEPLOY_MANIFEST}"
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
+    | sed -E 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+    > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
   docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
