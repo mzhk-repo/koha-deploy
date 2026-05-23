@@ -191,6 +191,17 @@ services:
         hard: 65536
     mem_limit: ${KOHA_ES_INDEXER_MEM_LIMIT:-512m}
     cpus: ${KOHA_ES_INDEXER_CPUS:-0.50}
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          if [ "$${USE_ELASTICSEARCH:-true}" != "true" ]; then exit 0; fi
+          _p=$$(printf '%04X' "$${MB_PORT:-61613}")
+          grep -qiE "[0-9A-F]+:$${_p} 01 " /proc/net/tcp /proc/net/tcp6 2>/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 360s
     networks:
       - kohanet
     environment:

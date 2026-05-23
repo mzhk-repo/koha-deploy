@@ -109,3 +109,30 @@
   - `koha_koha-es-indexer` має Swarm limits `NanoCPUs=500000000`, `MemoryBytes=536870912`;
   - running container має 1 `runuser` і 1 `es_indexer_daemon.pl`, RAM близько 174 MiB із 512 MiB, PIDs=2;
   - service spec містить foreground `exec runuser ... es_indexer_daemon.pl`, без watchdog-loop і без `ss`.
+
+### 8) Elasticsearch indexer: додано healthcheck для auto-recovery при відсутності STOMP-підписки
+
+- Контекст (2026-05-23):
+  - після redeploy `koha-es-indexer` повторно відтворив race condition: daemon стартував, але не встановив
+    STOMP-підписку на `koha_library-elastic_index`; `consumers=0`, `messages=15` накопичилось за 14 год;
+  - попереднє "crash-only foreground" рішення (запис 5) не покриває сценарій коли `es_indexer_daemon.pl`
+    живий, але без активного TCP-зʼєднання до RabbitMQ — контейнер не падає, Swarm нічого не перезапускає;
+  - тимчасовий ручний фікс: `docker service update --force koha_koha-es-indexer` → consumers=1, messages=0.
+
+- Оновлено:
+  - `docker-compose.yml`
+
+- Зміни:
+  - додано `healthcheck` до `koha-es-indexer`: перевіряє наявність ESTABLISHED TCP-зʼєднання до STOMP-порту
+    (`MB_PORT`, default 61613) через `/proc/net/tcp` + `/proc/net/tcp6` (чиста ядерна FS, без credentials,
+    без зовнішніх утиліт);
+  - якщо зʼєднання відсутнє — healthcheck fail; після 3 невдач (90s) Swarm автоматично замінює task
+    (`restart_policy: condition: any`);
+  - `start_period: 360s` = `KOHA_ES_INDEXER_WAIT_TIMEOUT (300s) + 60s` буфер — хибні спрацювання під час
+    нормального старту виключені;
+  - при рестарті `koha-es-indexer` сайт і intranet залишаються доступними (немає зворотних залежностей).
+
+- Перевірено:
+  - YAML синтаксис валідний (`python3 yaml.safe_load`);
+  - `scripts/verify-env.sh` проходить — `$${_p}` коректно ігнорується як runtime Bash-змінна;
+  - жоден сервіс не має `depends_on: koha-es-indexer`.
