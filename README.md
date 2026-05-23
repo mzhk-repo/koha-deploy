@@ -143,7 +143,7 @@
 | Принцип | Опис |
 |---|---|
 | **Single Container Network** | Усе в одній `docker-мережі` (`kohanet`) без публічних портів|
-| **SSOT Configuration** | Вся runtime-конфігурація в `.env` + `docker-compose.yaml` |
+| **SSOT Configuration** | Runtime-конфігурація в SOPS `env.*.enc`, `.env.example`, `docker-compose.yml` і `docker-compose.swarm.yml` |
 | **Immutable Deployments** | Контейнери непорушні; конфіг через env/volumes |
 | **Least Privilege** | `cap_drop`, `security_opt`, resource limits для всіх сервісів |
 | **Health Checks** | Усi критичні сервіси мають встроєні healthchecks |
@@ -292,7 +292,7 @@ koha-deploy/
 | Сервіс | Образ | Назначення | Порти (внутрішні) | Health Check |
 |---|---|---|---|---|
 | **koha** | ext. registry | Web-додаток Koha (Plack) | 8082 (OPAC), 8081 (Intranet) | HTTP 8081, 15s interval |
-| **koha-es-indexer** | ext. registry | Окремий supervised Elasticsearch indexing daemon | n/a | Swarm task + RabbitMQ consumer |
+| **koha-es-indexer** | ext. registry | Окремий crash-only Elasticsearch indexing daemon у foreground | n/a | Swarm task + 1 RabbitMQ consumer |
 | **db** | `mariadb:11` | Реляційна БД | 3306 | mariadb-admin ping, 10s |
 | **es** | local build | Elasticsearch search | 9200 | curl http://9200, 10s |
 | **rabbitmq** | local build | Message queue, async | 5672 (AMQP), 61613 (STOMP), 15672 (mgmt) | rabbitmq-diagnostics ping |
@@ -314,6 +314,9 @@ koha-es-indexer
     - db SQL availability
     - Elasticsearch TCP availability
     - RabbitMQ STOMP availability
+  then:
+    - exec runuser ... es_indexer_daemon.pl in foreground
+    - container exits if daemon exits; Compose/Swarm restart policy owns recovery
 ```
 
 ### Resource Limits
@@ -327,7 +330,7 @@ koha-es-indexer
 | **rabbitmq** | 512 MB (default) | 1.00 | 1024 |
 | **memcached** | 256 MB (default) | 0.50 | 1024 |
 
-> **Примітка**: Усі ліміти можуть бути перевизначені через `.env` змінні (e.g., `KOHA_MEM_LIMIT`, `KOHA_ES_INDEXER_MEM_LIMIT`, `DB_CPUS`).
+> **Примітка**: Усі ліміти можуть бути перевизначені через `.env` змінні (e.g., `KOHA_MEM_LIMIT`, `KOHA_ES_INDEXER_MEM_LIMIT`, `DB_CPUS`). Для Swarm `koha-es-indexer` memory/CPU застосовуються через `deploy.resources.limits`; локальний Compose також має `mem_limit`, `cpus` і `pids_limit`.
 
 ---
 
@@ -582,16 +585,12 @@ curl -I -H 'Host: koha.pinokew.buzz' http://127.0.0.1:8080/
    bash scripts/bootstrap-live-configs.sh --modules smtp
    ```
 
-3. **Протестувати відправку:**
+3. **Перевірити live SMTP-конфіг:**
    ```bash
-   bash scripts/test-smtp.sh
+   bash scripts/bootstrap-live-configs.sh --module verify --no-restart
    ```
 
-   **Очікуваний результат:**
-   ```
-   [INFO] Testing SMTP via koha@localhost...
-   [SUCCESS] Email sent to test@example.com
-   ```
+   **Очікуваний результат:** bootstrap verify підтверджує відповідність live `koha-conf.xml` значенням з runtime env.
 
 ### Backup
 
@@ -890,9 +889,13 @@ docker compose exec es curl http://localhost:9200/_cluster/health
 docker service ps koha_koha-es-indexer --no-trunc
 docker service logs --tail 80 koha_koha-es-indexer
 
-# RabbitMQ: elastic_index має мати consumer і не накопичувати ready messages
+# RabbitMQ: elastic_index має мати рівно 1 consumer і не накопичувати ready messages
 docker exec -i "$(docker ps -q --filter label=com.docker.swarm.service.name=koha_rabbitmq)" \
   rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+
+# Runtime sanity: у контейнері має бути 1 runuser + 1 es_indexer_daemon.pl
+docker exec -i "$(docker ps -q --filter label=com.docker.swarm.service.name=koha_koha-es-indexer)" \
+  ps -eo pid,ppid,stat,comm,args
 
 # Rebuild ES index
 docker compose exec koha koha-elasticsearch-indexer --rebuild
@@ -901,7 +904,7 @@ docker compose exec koha koha-elasticsearch-indexer --rebuild
 docker system df
 ```
 
-`koha-es-indexer` запускається окремим Swarm service. Він не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
+`koha-es-indexer` запускається окремим Swarm service у crash-only моделі: після readiness-перевірок виконує `exec runuser ... es_indexer_daemon.pl` у foreground. Немає внутрішнього watchdog-loop; якщо daemon завершується, завершується контейнер, а restart виконує Compose/Swarm. Сервіс не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
 
 ### External Tunnel / Traefik routing issues
 
