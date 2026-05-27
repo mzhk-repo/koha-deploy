@@ -135,7 +135,7 @@ ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/bootstrap-live-configs.sh --modu
 - Якщо індекси існують, порівнює count у DB (`biblio`, `auth_header`) з Elasticsearch `_count`.
 - За замовчуванням `ORCHESTRATOR_ES_REINDEX_ON_MISMATCH=auto`: reindex запускається тільки коли ES суттєво відстає від DB за `ORCHESTRATOR_ES_MISMATCH_THRESHOLD_PERCENT`.
 - Після перевірок перезапускає керований сервіс `koha-es-indexer`, щоб daemon перечитав актуальний `SearchEngine` і не залишався у stale Zebra context після bootstrap.
-- `koha-es-indexer` винесений в окремий довгоживучий crash-only сервіс: перед стартом чекає `koha-conf.xml`, DB, Elasticsearch TCP і RabbitMQ STOMP, після чого запускає `es_indexer_daemon.pl` у foreground. Якщо daemon завершується з помилкою, контейнер завершується теж, а Compose/Swarm restart policy підіймає його заново.
+- `koha-es-indexer` винесений в окремий довгоживучий crash-only сервіс: перед стартом чекає `koha-conf.xml`, DB, Elasticsearch TCP і RabbitMQ STOMP, після чого supervisor запускає `es_indexer_daemon.pl` і перевіряє consumer на RabbitMQ `elastic_index` queue. Якщо daemon завершується або consumer відсутній довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`, контейнер завершується з помилкою, а Compose/Swarm restart policy підіймає його заново.
 - Runtime exec іде через `docker_runtime_exec`, тому підтримує Swarm і Compose fallback.
 
 #### Manual execution

@@ -353,7 +353,7 @@ koha-es-indexer
 |---|---|---|
 | **Koha Config** | `KOHA_INSTANCE`, `KOHA_DOMAIN`, `KOHA_TIMEZONE` | env.*.enc |
 | **Database** | `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_ROOT_PASS` | env.*.enc (secret) |
-| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE`, `KOHA_ES_INDEXER_BATCH_SIZE`, `KOHA_ES_INDEXER_WAIT_TIMEOUT` | env.*.enc |
+| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE`, `KOHA_ES_INDEXER_BATCH_SIZE`, `KOHA_ES_INDEXER_WAIT_TIMEOUT`, `KOHA_ES_INDEXER_MONITOR_INTERVAL`, `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS` | env.*.enc |
 | **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | env.*.enc (secret) |
 | **Memcached** | `MEMCACHED_SERVERS` | env.*.enc |
 | **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | env.*.enc |
@@ -904,7 +904,7 @@ docker compose exec koha koha-elasticsearch-indexer --rebuild
 docker system df
 ```
 
-`koha-es-indexer` запускається окремим Swarm service у crash-only моделі: після readiness-перевірок виконує `exec runuser ... es_indexer_daemon.pl` у foreground. Немає внутрішнього watchdog-loop; якщо daemon завершується, завершується контейнер, а restart виконує Compose/Swarm. Сервіс не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
+`koha-es-indexer` запускається окремим Swarm service у crash-only моделі: після readiness-перевірок supervisor стартує `es_indexer_daemon.pl`, перевіряє RabbitMQ Management API і завершує контейнер з помилкою, якщо consumer на `koha_${KOHA_INSTANCE}-elastic_index` відсутній довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`. Restart виконує Compose/Swarm policy. Сервіс не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
 
 ### External Tunnel / Traefik routing issues
 

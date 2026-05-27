@@ -136,3 +136,28 @@
   - YAML синтаксис валідний (`python3 yaml.safe_load`);
   - `scripts/verify-env.sh` проходить — `$${_p}` коректно ігнорується як runtime Bash-змінна;
   - жоден сервіс не має `depends_on: koha-es-indexer`.
+
+### 9) Elasticsearch indexer: supervisor завершує контейнер при `consumers=0`
+
+- Контекст (2026-05-27):
+  - live-перевірка показала `koha_koha-es-indexer` у стані `healthy`, процес `es_indexer_daemon.pl` живий, але RabbitMQ queue `koha_library-elastic_index` мала `consumers=0` і накопичені `messages_ready`;
+  - попередній healthcheck перевіряв лише ESTABLISHED TCP-зʼєднання до STOMP-порту, тому давав false positive: TCP socket існував, але daemon не був consumer черги;
+  - Swarm restart policy надійно спрацьовує при exit контейнера, тому recovery має переводити втрату consumer у crash-only failure.
+
+- Оновлено:
+  - `docker-compose.yml`;
+  - `docker-compose.swarm.yml`;
+  - `.env.example`;
+  - `README.md`;
+  - `docs/scripts_runbook.md`.
+
+- Зміни:
+  - `koha-es-indexer` запускає `es_indexer_daemon.pl` під supervisor-loop замість прямого `exec`;
+  - supervisor читає RabbitMQ Management API з credentials у live `koha-conf.xml` і перевіряє кількість consumer на `${memcached_namespace}-elastic_index`;
+  - якщо `consumers=0` триває довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`, supervisor зупиняє daemon і завершує контейнер з кодом `1`;
+  - додано керовані параметри `KOHA_ES_INDEXER_MONITOR_INTERVAL` і `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`.
+
+- План runtime-перевірки:
+  - застосувати оновлений Swarm manifest;
+  - підтвердити, що при `consumers=0` supervisor завершує task;
+  - підтвердити, що Swarm створює новий task і після старту RabbitMQ queue має `consumers>0`.

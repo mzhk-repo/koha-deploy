@@ -173,9 +173,85 @@ services:
             perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $$conn=Koha::BackgroundJob->connect; exit 1 unless $$conn; $$conn->disconnect; exit 0'
         fi
 
-        exec runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+        rabbitmq_elastic_consumers() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
+              sub xml_value {
+                my ($$doc, $$name) = @_;
+                my ($$node) = $$doc->findnodes("//message_broker/$$name");
+                return $$node ? $$node->textContent : "";
+              }
+              sub url_escape {
+                my ($$value) = @_;
+                $$value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($$1))/eg;
+                return $$value;
+              }
+
+              my $$doc = XML::LibXML->load_xml(location => $$ENV{KOHA_CONF});
+              my $$host = xml_value($$doc, "hostname") || $$ENV{MB_HOST} || "rabbitmq";
+              my $$user = xml_value($$doc, "username") || $$ENV{MB_USER} || "";
+              my $$pass = xml_value($$doc, "password") || "";
+              my $$vhost = xml_value($$doc, "vhost") || "/";
+              my $$namespace = C4::Context->config("memcached_namespace") || "koha_" . ($$ENV{KOHA_INSTANCE} || "library");
+              my $$queue = $$namespace . "-elastic_index";
+              my $$auth = encode_base64("$$user:$$pass", "");
+              my $$url = "http://$$host:15672/api/queues/" . url_escape($$vhost) . "/" . url_escape($$queue);
+              my $$response = HTTP::Tiny->new(timeout => 5)->get($$url, { headers => { Authorization => "Basic $$auth" } });
+              exit 2 unless $$response->{success};
+              my ($$consumers) = $$response->{content} =~ /"consumers"\s*:\s*(\d+)/;
+              print defined($$consumers) ? $$consumers : 0;
+            '
+        }
+
+        monitor_interval="$${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}"
+        consumer_grace="$${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}"
+        if ! [[ "$$monitor_interval" =~ ^[0-9]+$$ ]] || [ "$$monitor_interval" -lt 1 ]; then
+          echo "ERROR: KOHA_ES_INDEXER_MONITOR_INTERVAL must be a positive integer" >&2
+          exit 1
+        fi
+        if ! [[ "$$consumer_grace" =~ ^[0-9]+$$ ]] || [ "$$consumer_grace" -lt "$$monitor_interval" ]; then
+          echo "ERROR: KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS must be >= KOHA_ES_INDEXER_MONITOR_INTERVAL" >&2
+          exit 1
+        fi
+
+        runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
           /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
-          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE"
+          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE" &
+        indexer_pid="$$!"
+
+        stop_indexer() {
+          if kill -0 "$$indexer_pid" 2>/dev/null; then
+            kill "$$indexer_pid" 2>/dev/null || true
+            wait "$$indexer_pid" 2>/dev/null || true
+          fi
+        }
+        trap 'stop_indexer; exit 143' TERM INT
+
+        if [ "$$(jobs_notification_method)" != "STOMP" ]; then
+          wait "$$indexer_pid"
+          exit "$$?"
+        fi
+
+        consumer_missing_since=""
+        while kill -0 "$$indexer_pid" 2>/dev/null; do
+          consumers="$$(rabbitmq_elastic_consumers || printf '0')"
+          if [ "$$consumers" -gt 0 ]; then
+            consumer_missing_since=""
+          else
+            if [ -z "$$consumer_missing_since" ]; then
+              consumer_missing_since="$$SECONDS"
+              echo "WARNING: koha-es-indexer RabbitMQ consumer missing (consumers=$$consumers)"
+            elif [ "$$((SECONDS - consumer_missing_since))" -ge "$$consumer_grace" ]; then
+              echo "ERROR: koha-es-indexer RabbitMQ consumer missing for >=$${consumer_grace}s; exiting for Swarm restart" >&2
+              stop_indexer
+              exit 1
+            fi
+          fi
+          sleep "$$monitor_interval"
+        done
+
+        wait "$$indexer_pid"
+        exit "$$?"
     restart: unless-stopped
     logging:
       driver: json-file
@@ -221,6 +297,8 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
+      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}
+      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}
     depends_on:
       db:
         condition: service_healthy
