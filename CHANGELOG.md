@@ -3,7 +3,7 @@
 Це індекс томів changelog. Детальні записи ведуться у `docs/changelogs/`.
 
 ## Поточний активний том
-docs/changelogs/CHANGELOG_2026_VOL_07.md
+docs/changelogs/CHANGELOG_2026_VOL_08.md
 
 ## Політика ротації
 

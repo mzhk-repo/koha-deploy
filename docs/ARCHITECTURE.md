@@ -1,23 +1,24 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-03-13
+Дата оновлення: 2026-05-23
 
 ## 1) Призначення репозиторію
 
-`koha-deploy` це operational/deploy репозиторій для production-стеку Koha:
-- оркестрація сервісів через `docker-compose.yaml`;
-- керування runtime-параметрами через `.env` (SSOT);
-- операційні скрипти для backup/restore, валідацій і live-патчів;
-- CI/CD workflow з базовими перевірками і автодеплоєм на `main`.
+`koha-deploy` це operational/deploy репозиторій для production/dev Swarm-стеку Koha:
+- оркестрація сервісів через `docker-compose.yml` і `docker-compose.swarm.yml`;
+- керування runtime-параметрами через SOPS-encrypted `env.dev.enc` / `env.prod.enc` і `.env.example` як template;
+- операційні скрипти для backup/restore, валідацій, Swarm deploy і live-патчів;
+- CI/CD workflow з базовими перевірками і автодеплоєм через `scripts/deploy-orchestrator-swarm.sh`.
 
 ## 2) Поточний стек (фактичний)
 
-Сервіси в `docker-compose.yaml`:
-1. `koha` (зовнішній образ, рекомендовано digest pin у `.env`)
-2. `db` (`mariadb:11`)
-3. `es` (локальна збірка з `elasticsearch/Dockerfile`)
-4. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`)
-5. `memcached` (локальна збірка з `memcached/Dockerfile`)
+Сервіси в `docker-compose.yml` + `docker-compose.swarm.yml`:
+1. `koha` (зовнішній образ, рекомендовано digest pin у env)
+2. `koha-es-indexer` (окремий crash-only daemon для Elasticsearch indexing)
+3. `db` (`mariadb:11`)
+4. `es` (локальна збірка з `elasticsearch/Dockerfile`)
+5. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`, STOMP enabled)
+6. `memcached` (локальна збірка з `memcached/Dockerfile`)
 
 Зовнішній доступ:
 1. External Cloudflare Tunnel (окремий стек/інфраструктура)
@@ -26,7 +27,8 @@
 Ключове:
 - локальний сервіс `tunnel` видалено з `koha-deploy`;
 - `koha` host-ports вимкнені; зовнішній доступ іде через `Cloudflare Tunnel -> Traefik -> Koha`;
-- sidecar сервіси `es/rabbitmq/memcached` будуються локально у deploy-потоці.
+- sidecar сервіси `es/rabbitmq/memcached` будуються локально у deploy-потоці;
+- `koha-es-indexer` винесений з основного Koha container в окремий Swarm service з власними resource limits.
 
 ## 3) Мережева модель
 
@@ -39,9 +41,23 @@
 5. Міжсервісний доступ Koha sidecar-и залишають тільки внутрішні DNS-імена (`db`, `es`, `rabbitmq`, `memcached`).
 6. Публічний трафік до Koha не відкривається напряму через host ports.
 
-## 4) Конфігураційна модель
+## 4) Elasticsearch indexing model
 
-1. SSOT runtime-конфігів: `.env` + `.env.example` + `docker-compose.yaml`.
+1. `koha-es-indexer` це окремий довгоживучий Swarm service, а не background-процес всередині `koha`.
+2. Перед стартом daemon сервіс чекає:
+   - live `koha-conf.xml`;
+   - SQL availability через `koha-mysql`;
+   - Elasticsearch TCP availability;
+   - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
+3. Після readiness-перевірок сервіс виконує `exec runuser ... es_indexer_daemon.pl` у foreground.
+4. Модель recovery — crash-only: якщо Perl daemon завершується, завершується контейнер, а restart виконує Compose/Swarm policy.
+5. Внутрішній watchdog-loop і перевірки через `ss` не використовуються, щоб не створювати orphan child processes.
+6. Очікуваний runtime стан: один running Swarm task, один `runuser`, один `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
+7. Swarm limits для сервісу задаються через `deploy.resources.limits`: memory `512m` за замовчуванням і CPU `0.50` за замовчуванням.
+
+## 5) Конфігураційна модель
+
+1. SSOT runtime-конфігів: SOPS `env.dev.enc` / `env.prod.enc`, `.env.example`, `docker-compose.yml` і `docker-compose.swarm.yml`.
 2. Домени оркеструються як code через:
    - `KOHA_OPAC_SERVERNAME`
    - `KOHA_INTRANET_SERVERNAME`
@@ -59,7 +75,7 @@
 - `oidc-prefs`
 - `verify`
 
-## 5) Trusted proxy / real IP модель
+## 6) Trusted proxy / real IP модель
 
 Щоб не втрачати client IP у ланцюжку `Cloudflare -> Traefik -> Apache`:
 1. У `koha` контейнері активується `mod_remoteip` на старті.
@@ -69,7 +85,7 @@
 Результат:
 - Apache access logs фіксують реальний IP клієнта (з `CF-Connecting-IP`), а не IP внутрішнього Traefik.
 
-## 6) Дані і томи
+## 7) Дані і томи
 
 Зовнішні bind-path томи задаються в `.env`:
 1. `VOL_DB_PATH`
@@ -78,18 +94,19 @@
 4. `VOL_KOHA_DATA`
 5. `VOL_KOHA_LOGS`
 
-## 7) Операційні скрипти
+## 8) Операційні скрипти
 
 Основні скрипти:
 1. `scripts/verify-env.sh` — валідація env-моделі.
-2. `scripts/bootstrap-live-configs.sh` — оркестрація live patch modules.
-3. `scripts/test-smtp.sh` — runtime SMTP тест.
-4. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
-5. `scripts/restore.sh` — restore/PITR-процедури.
-6. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
-7. `scripts/install-collect-logs-timer.sh` + `systemd/*.service|*.timer` — плановий збір логів.
+2. `scripts/deploy-orchestrator-swarm.sh` — Swarm deploy: validation, volume init, versioned secrets, stack deploy, bootstrap і ES guard.
+3. `scripts/bootstrap-live-configs.sh` — оркестрація live patch modules.
+4. `scripts/koha-elasticsearch-index-guard.sh` — smart ES guard і перевірка RabbitMQ consumer для `koha-es-indexer`.
+5. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
+6. `scripts/restore.sh` — restore/PITR-процедури.
+7. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
+8. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
 
-## 8) CI/CD архітектура
+## 9) CI/CD архітектура
 
 Workflow: `.github/workflows/ci-cd-checks.yml`
 
@@ -106,34 +123,38 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 `cd-deploy` (тільки `push` у `main`):
 1. SSH підключення до сервера (опційно через Tailscale `authkey`)
 2. `git fetch/reset` до `origin/main`
-3. `docker compose pull` для registry-сервісів
-4. `docker compose build` для локальних sidecar образів
-5. `docker compose up -d --remove-orphans`
-6. `bootstrap-live-configs.sh`
-7. health-check `koha`
+3. SOPS decrypt runtime env у тимчасовий файл
+4. `scripts/deploy-orchestrator-swarm.sh` у `ORCHESTRATOR_MODE=swarm`
+5. `docker stack deploy` з rendered manifest
+6. post-deploy `bootstrap-live-configs.sh`, `koha-elasticsearch-index-guard.sh`, password prefs lockdown
+7. health/runtime checks для `koha` і `koha-es-indexer`
 
-## 9) Правила і обмеження
+## 10) Правила і обмеження
 
 1. Секрети не комітяться в git.
 2. Постійні зміни робляться через deploy-репо (compose/env/scripts), а не ручними правками в контейнері.
 3. Для backup/restore використовуються тільки `scripts/backup.sh` і `scripts/restore.sh`.
-4. Зміни фіксуються в активному changelog-томі (`CHANGELOGS/`).
+4. Зміни фіксуються в активному changelog-томі (`docs/changelogs/`).
 
-## 10) Структура репо (актуальна)
+## 11) Структура репо (актуальна)
 
 ```text
 koha-deploy/
   .github/workflows/ci-cd-checks.yml
-  docker-compose.yaml
+  docker-compose.yml
+  docker-compose.swarm.yml
   .env.example
+  env.dev.enc
+  env.prod.enc
   apache/
     remoteip.conf
   scripts/
     backup.sh
     restore.sh
     verify-env.sh
+    deploy-orchestrator-swarm.sh
     bootstrap-live-configs.sh
-    test-smtp.sh
+    koha-elasticsearch-index-guard.sh
     patch/
       patch-koha-conf-xml-*.sh
       patch-koha-sysprefs-domain.sh
@@ -141,7 +162,8 @@ koha-deploy/
     koha-deploy-collect-logs.service
     koha-deploy-collect-logs.timer
   CHANGELOG.md
-  CHANGELOGS/
+  docs/
+    changelogs/
   AGENTS.md
   ROADMAP_PROD.md
 ```

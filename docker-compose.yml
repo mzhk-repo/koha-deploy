@@ -142,13 +142,116 @@ services:
 
         wait_until "koha-conf.xml" test -r "$$KOHA_CONF"
         wait_until "Koha database" koha-mysql "$$KOHA_INSTANCE" -N -B -e "SELECT 1"
-        wait_until "Elasticsearch" perl -MIO::Socket::INET -e 'my $$h=$$ENV{ELASTICSEARCH_HOST}||q(es:9200); $$h=~s{^https?://}{}; $$h=~s{/.*$$}{}; my ($$host,$$port)=split /:/,$$h,2; $$port ||= 9200; exit(IO::Socket::INET->new(PeerHost=>$$host,PeerPort=>$$port,Proto=>q(tcp),Timeout=>3)?0:1)'
-        wait_until "RabbitMQ STOMP" runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
-          perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $$conn=Koha::BackgroundJob->connect; exit 1 unless $$conn; $$conn->disconnect; exit 0'
 
-        exec runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+        tcp_probe() {
+          local endpoint="$$1"
+          local default_port="$$2"
+          local host port
+
+          endpoint="$${endpoint#http://}"
+          endpoint="$${endpoint#https://}"
+          endpoint="$${endpoint%%/*}"
+          host="$${endpoint%%:*}"
+          port="$${endpoint##*:}"
+          if [ "$$port" = "$$endpoint" ]; then
+            port="$$default_port"
+          fi
+
+          timeout 3 bash -c "</dev/tcp/$$host/$$port"
+        }
+
+        wait_until "Elasticsearch TCP" tcp_probe "$$ELASTICSEARCH_HOST" 9200
+
+        jobs_notification_method() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MC4::Context -e "print C4::Context->preference(q(JobsNotificationMethod)) // q(STOMP);"
+        }
+
+        if [ "$$(jobs_notification_method)" = "STOMP" ]; then
+          wait_until "RabbitMQ STOMP TCP" tcp_probe "$$MB_HOST:$${MB_PORT:-61613}" 61613
+          wait_until "RabbitMQ STOMP Koha connect" runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $$conn=Koha::BackgroundJob->connect; exit 1 unless $$conn; $$conn->disconnect; exit 0'
+        fi
+
+        rabbitmq_elastic_consumers() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
+              sub xml_value {
+                my ($$doc, $$name) = @_;
+                my ($$node) = $$doc->findnodes("//message_broker/$$name");
+                return $$node ? $$node->textContent : "";
+              }
+              sub url_escape {
+                my ($$value) = @_;
+                $$value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($$1))/eg;
+                return $$value;
+              }
+
+              my $$doc = XML::LibXML->load_xml(location => $$ENV{KOHA_CONF});
+              my $$host = xml_value($$doc, "hostname") || $$ENV{MB_HOST} || "rabbitmq";
+              my $$user = xml_value($$doc, "username") || $$ENV{MB_USER} || "";
+              my $$pass = xml_value($$doc, "password") || "";
+              my $$vhost = xml_value($$doc, "vhost") || "/";
+              my $$namespace = C4::Context->config("memcached_namespace") || "koha_" . ($$ENV{KOHA_INSTANCE} || "library");
+              my $$queue = $$namespace . "-elastic_index";
+              my $$auth = encode_base64("$$user:$$pass", "");
+              my $$url = "http://$$host:15672/api/queues/" . url_escape($$vhost) . "/" . url_escape($$queue);
+              my $$response = HTTP::Tiny->new(timeout => 5)->get($$url, { headers => { Authorization => "Basic $$auth" } });
+              exit 2 unless $$response->{success};
+              my ($$consumers) = $$response->{content} =~ /"consumers"\s*:\s*(\d+)/;
+              print defined($$consumers) ? $$consumers : 0;
+            '
+        }
+
+        monitor_interval="$${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}"
+        consumer_grace="$${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}"
+        if ! [[ "$$monitor_interval" =~ ^[0-9]+$$ ]] || [ "$$monitor_interval" -lt 1 ]; then
+          echo "ERROR: KOHA_ES_INDEXER_MONITOR_INTERVAL must be a positive integer" >&2
+          exit 1
+        fi
+        if ! [[ "$$consumer_grace" =~ ^[0-9]+$$ ]] || [ "$$consumer_grace" -lt "$$monitor_interval" ]; then
+          echo "ERROR: KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS must be >= KOHA_ES_INDEXER_MONITOR_INTERVAL" >&2
+          exit 1
+        fi
+
+        runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
           /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
-          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE"
+          --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE" &
+        indexer_pid="$$!"
+
+        stop_indexer() {
+          if kill -0 "$$indexer_pid" 2>/dev/null; then
+            kill "$$indexer_pid" 2>/dev/null || true
+            wait "$$indexer_pid" 2>/dev/null || true
+          fi
+        }
+        trap 'stop_indexer; exit 143' TERM INT
+
+        if [ "$$(jobs_notification_method)" != "STOMP" ]; then
+          wait "$$indexer_pid"
+          exit "$$?"
+        fi
+
+        consumer_missing_since=""
+        while kill -0 "$$indexer_pid" 2>/dev/null; do
+          consumers="$$(rabbitmq_elastic_consumers || printf '0')"
+          if [ "$$consumers" -gt 0 ]; then
+            consumer_missing_since=""
+          else
+            if [ -z "$$consumer_missing_since" ]; then
+              consumer_missing_since="$$SECONDS"
+              echo "WARNING: koha-es-indexer RabbitMQ consumer missing (consumers=$$consumers)"
+            elif [ "$$((SECONDS - consumer_missing_since))" -ge "$$consumer_grace" ]; then
+              echo "ERROR: koha-es-indexer RabbitMQ consumer missing for >=$${consumer_grace}s; exiting for Swarm restart" >&2
+              stop_indexer
+              exit 1
+            fi
+          fi
+          sleep "$$monitor_interval"
+        done
+
+        wait "$$indexer_pid"
+        exit "$$?"
     restart: unless-stopped
     logging:
       driver: json-file
@@ -162,8 +265,19 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    mem_limit: ${KOHA_ES_INDEXER_MEM_LIMIT:-1g}
+    mem_limit: ${KOHA_ES_INDEXER_MEM_LIMIT:-512m}
     cpus: ${KOHA_ES_INDEXER_CPUS:-0.50}
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          if [ "$${USE_ELASTICSEARCH:-true}" != "true" ]; then exit 0; fi
+          _p=$$(printf '%04X' "$${MB_PORT:-61613}")
+          grep -qiE "[0-9A-F]+:$${_p} 01 " /proc/net/tcp /proc/net/tcp6 2>/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 360s
     networks:
       - kohanet
     environment:
@@ -183,6 +297,8 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
+      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}
+      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}
     depends_on:
       db:
         condition: service_healthy
