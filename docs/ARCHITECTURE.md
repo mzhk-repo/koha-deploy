@@ -55,6 +55,13 @@
 6. Очікуваний runtime стан: один running Swarm task, один `runuser`, один `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
 7. Swarm limits для сервісу задаються через `deploy.resources.limits`: memory `512m` за замовчуванням і CPU `0.50` за замовчуванням.
 
+## 4.1) Background jobs model
+
+1. Основний service `koha` володіє вбудованими Koha background jobs workers для черг `default` і `long_tasks`.
+2. Якщо `JobsNotificationMethod=STOMP`, healthcheck `koha` перевіряє не тільки intranet HTTP, а й RabbitMQ Management API consumers для `${memcached_namespace}-default` і `${memcached_namespace}-long_tasks`.
+3. Якщо будь-яка обовʼязкова черга має `consumers=0`, `koha` стає unhealthy, а Swarm restart policy замінює task. Це покриває сценарій, коли `rabbitmq` перезапустився пізніше за `koha`, а живі worker-процеси втратили STOMP-підписку.
+4. Якщо `JobsNotificationMethod` не дорівнює `STOMP`, RabbitMQ consumer check пропускається після успішної HTTP-перевірки.
+
 ## 5) Конфігураційна модель
 
 1. SSOT runtime-конфігів: SOPS `env.dev.enc` / `env.prod.enc`, `.env.example`, `docker-compose.yml` і `docker-compose.swarm.yml`.
