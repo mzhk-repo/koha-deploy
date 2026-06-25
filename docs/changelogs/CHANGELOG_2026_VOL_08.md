@@ -161,3 +161,30 @@
   - застосувати оновлений Swarm manifest;
   - підтвердити, що при `consumers=0` supervisor завершує task;
   - підтвердити, що Swarm створює новий task і після старту RabbitMQ queue має `consumers>0`.
+
+### 10) Koha background jobs: healthcheck контролює STOMP consumers для import queues
+
+- Контекст (2026-06-25):
+  - `koha-es-indexer` мав активний consumer на `koha_library-elastic_index`, тому Elasticsearch indexer не був root cause;
+  - імпортні jobs `stage_marc_for_import` зависали в `background_jobs.status=new` у черзі `long_tasks`;
+  - RabbitMQ показував `koha_library-long_tasks` з `messages_ready=1` і `consumers=0`;
+  - ймовірний сценарій: `rabbitmq` task був перезапущений пізніше за `koha`, а вбудовані Koha background jobs workers лишились живі, але втратили STOMP consumer-підписку.
+
+- Оновлено:
+  - `docker-compose.yml`;
+  - `docker-compose.swarm.yml`;
+  - `docs/ARCHITECTURE.md`.
+
+- Зміни:
+  - healthcheck основного `koha` service лишив intranet HTTP-перевірку першим кроком;
+  - якщо `JobsNotificationMethod` не дорівнює `STOMP`, RabbitMQ consumer check пропускається;
+  - якщо `JobsNotificationMethod=STOMP`, healthcheck читає live `koha-conf.xml`, звертається до RabbitMQ Management API і перевіряє consumers для `${memcached_namespace}-default` та `${memcached_namespace}-long_tasks`;
+  - якщо будь-яка обовʼязкова черга має `consumers=0`, `koha` стає unhealthy, щоб Swarm замінив task і перевідкрив worker STOMP-підписки;
+  - у Swarm для `koha` встановлено production-friendly healthcheck timings: `start_period: 360s`, `interval: 30s`, `timeout: 10s`, `retries: 3`.
+
+- План перевірки:
+  - `python3 -c 'import yaml; yaml.safe_load(open("docker-compose.yml")); yaml.safe_load(open("docker-compose.swarm.yml"))'`;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`;
+  - `bash scripts/verify-env.sh --example-only`;
+  - `git diff --check -- docker-compose.yml docker-compose.swarm.yml docs/ARCHITECTURE.md docs/changelogs/CHANGELOG_2026_VOL_08.md`;
+  - після deploy перевірити `koha_library-default` і `koha_library-long_tasks`: очікувано `consumers>=1`.

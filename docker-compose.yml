@@ -96,7 +96,53 @@ services:
       - ${VOL_KOHA_DATA}:/var/lib/koha
       - ${VOL_KOHA_LOGS}:/var/log/koha
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:${KOHA_INTRANET_PORT:-8081} || exit 1"]
+      test:
+        - "CMD-SHELL"
+        - |
+          wget -q --spider "http://localhost:$${KOHA_INTRANET_PORT:-8081}" || exit 1
+
+          export KOHA_HOME="/usr/share/koha"
+          export PERL5LIB="/usr/share/koha/lib"
+
+          koha_user="$${KOHA_INSTANCE}-koha"
+          jobs_method="$$(runuser --preserve-environment -u "$$koha_user" -- \
+            perl -I/usr/share/koha/lib -MC4::Context -e 'print C4::Context->preference(q(JobsNotificationMethod)) // q(STOMP);' 2>/dev/null || printf 'STOMP')"
+          if [ "$$jobs_method" != "STOMP" ]; then
+            exit 0
+          fi
+
+          runuser --preserve-environment -u "$$koha_user" -- \
+            perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
+              sub xml_value {
+                my ($$doc, $$name) = @_;
+                my ($$node) = $$doc->findnodes("//message_broker/$$name");
+                return $$node ? $$node->textContent : "";
+              }
+              sub url_escape {
+                my ($$value) = @_;
+                $$value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($$1))/eg;
+                return $$value;
+              }
+
+              my $$doc = XML::LibXML->load_xml(location => $$ENV{KOHA_CONF});
+              my $$host = xml_value($$doc, "hostname") || $$ENV{MB_HOST} || "rabbitmq";
+              my $$user = xml_value($$doc, "username") || $$ENV{MB_USER} || "";
+              my $$pass = xml_value($$doc, "password") || $$ENV{MB_PASS} || "";
+              my $$vhost = xml_value($$doc, "vhost") || "/";
+              my $$namespace = C4::Context->config("memcached_namespace") || "koha_" . ($$ENV{KOHA_INSTANCE} || "library");
+              my $$auth = encode_base64("$$user:$$pass", "");
+              my $$http = HTTP::Tiny->new(timeout => 5);
+
+              for my $$suffix (qw(default long_tasks)) {
+                my $$queue = $$namespace . "-" . $$suffix;
+                my $$url = "http://$$host:15672/api/queues/" . url_escape($$vhost) . "/" . url_escape($$queue);
+                my $$response = $$http->get($$url, { headers => { Authorization => "Basic $$auth" } });
+                die "RabbitMQ Management API check failed for $$queue\n" unless $$response->{success};
+                my ($$consumers) = $$response->{content} =~ /"consumers"\s*:\s*(\d+)/;
+                $$consumers ||= 0;
+                die "RabbitMQ queue $$queue has no consumers\n" if $$consumers < 1;
+              }
+            '
       interval: 15s
       timeout: 5s
       retries: 5
