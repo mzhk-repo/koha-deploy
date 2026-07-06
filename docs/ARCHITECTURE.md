@@ -44,16 +44,19 @@
 ## 4) Elasticsearch indexing model
 
 1. `koha-es-indexer` це окремий довгоживучий Swarm service, а не background-процес всередині `koha`.
-2. Перед стартом daemon сервіс чекає:
+2. Основний `koha` передає image-native `KOHA_ES_INDEXER_AUTOSTART=false`, що вимикає legacy
+   `/usr/sbin/koha-es-indexer --start` і залишає черзі одного власника.
+3. Перед стартом daemon сервіс чекає:
    - live `koha-conf.xml`;
    - SQL availability через `koha-mysql`;
    - Elasticsearch TCP availability;
    - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
-3. Після readiness-перевірок сервіс виконує `exec runuser ... es_indexer_daemon.pl` у foreground.
-4. Модель recovery — crash-only: якщо Perl daemon завершується, завершується контейнер, а restart виконує Compose/Swarm policy.
-5. Внутрішній watchdog-loop і перевірки через `ss` не використовуються, щоб не створювати orphan child processes.
-6. Очікуваний runtime стан: один running Swarm task, один `runuser`, один `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
-7. Swarm limits для сервісу задаються через `deploy.resources.limits`: memory `512m` за замовчуванням і CPU `0.50` за замовчуванням.
+4. Після readiness-перевірок supervisor запускає `es_indexer_daemon.pl` і контролює RabbitMQ consumer.
+5. Модель recovery — crash-only: якщо Perl daemon завершується або consumer відсутній довше grace period,
+   завершується контейнер, а restart виконує Compose/Swarm policy.
+6. Перевірки через `ss` не використовуються, щоб не створювати orphan child processes.
+7. Очікуваний runtime стан: один running Swarm task, один `runuser`, один `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
+8. Swarm limits для сервісу задаються через `deploy.resources.limits`: memory `512m` за замовчуванням і CPU `0.50` за замовчуванням.
 
 ## 4.1) Background jobs model
 

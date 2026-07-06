@@ -188,3 +188,52 @@
   - `bash scripts/verify-env.sh --example-only`;
   - `git diff --check -- docker-compose.yml docker-compose.swarm.yml docs/ARCHITECTURE.md docs/changelogs/CHANGELOG_2026_VOL_08.md`;
   - після deploy перевірити `koha_library-default` і `koha_library-long_tasks`: очікувано `consumers>=1`.
+
+### 11) Elasticsearch indexer: bootstrap відновлює відсутній `SearchEngine`
+
+- Контекст (2026-07-06):
+  - `koha-es-indexer` потрапив у restart loop з кодом `11`;
+  - `es_indexer_daemon.pl` вибирав `Koha::SearchEngine::Zebra::Indexer` і падав на виклику
+    `get_elasticsearch_params`, оскільки `systempreferences.SearchEngine` був відсутній;
+  - модуль `search-prefs` виконував лише `UPDATE`, тому не створював видалений або відсутній рядок.
+
+- Оновлено:
+  - `scripts/patch/patch-koha-sysprefs-search.sh`.
+
+- Зміни:
+  - запис `SearchEngine` створюється або оновлюється через ідемпотентний
+    `INSERT ... ON DUPLICATE KEY UPDATE`;
+  - повторний bootstrap відновлює кероване значення без ручного SQL.
+
+- Перевірка:
+  - `bash -n scripts/patch/patch-koha-sysprefs-search.sh`;
+  - `shellcheck scripts/patch/patch-koha-sysprefs-search.sh`;
+  - `git diff --check -- scripts/patch/patch-koha-sysprefs-search.sh docs/changelogs/CHANGELOG_2026_VOL_08.md`.
+
+### 12) Elasticsearch indexer: вимкнено дубльований legacy consumer у `koha`
+
+- Контекст (2026-07-06):
+  - після відновлення `SearchEngine=Elasticsearch` RabbitMQ показував два consumers на
+    `koha_library-elastic_index`;
+  - окремий `koha-es-indexer` service і legacy daemon усередині основного `koha` одночасно запускали
+    `es_indexer_daemon.pl`;
+  - legacy consumer міг маскувати втрату consumer керованого service.
+
+- Оновлено:
+  - `docker-compose.yml`;
+  - `docker-compose.swarm.yml`;
+  - `.env.example`;
+  - `README.md`;
+  - `docs/ARCHITECTURE.md`.
+
+- Зміни:
+  - додано image-native `KOHA_ES_INDEXER_AUTOSTART`, для deploy default `false`;
+  - при `false` основний `koha` не запускає legacy indexer, а окремий service лишається єдиним
+    власником `elastic_index` consumer;
+  - Koha image зберігає backward-compatible default `true`, якщо прапорець не передано.
+
+- Перевірено:
+  - `docker compose --env-file .env.example -f docker-compose.yml config`;
+  - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`;
+  - `bash scripts/verify-env.sh --example-only`;
+  - `git diff --check`.

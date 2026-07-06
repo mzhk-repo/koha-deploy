@@ -64,7 +64,9 @@ if ${DRY_RUN}; then
 fi
 
 SQL="
-UPDATE systempreferences SET value='${SEARCH_ENGINE_SQL}' WHERE variable='SearchEngine';
+INSERT INTO systempreferences (variable, value)
+VALUES ('SearchEngine', '${SEARCH_ENGINE_SQL}')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
 SELECT variable, value FROM systempreferences
 WHERE variable IN ('SearchEngine')
 ORDER BY variable;

@@ -319,6 +319,10 @@ koha-es-indexer
     - container exits if daemon exits; Compose/Swarm restart policy owns recovery
 ```
 
+Основний `koha` передає image-native `KOHA_ES_INDEXER_AUTOSTART=false`, що вимикає legacy
+in-container daemon. Окремий `koha-es-indexer` service залишається єдиним власником RabbitMQ
+`elastic_index` consumer. Використаний Koha image має підтримувати цей runtime-прапорець.
+
 ### Resource Limits
 
 | Сервіс | Memory | CPU | PID Limit |
@@ -353,7 +357,7 @@ koha-es-indexer
 |---|---|---|
 | **Koha Config** | `KOHA_INSTANCE`, `KOHA_DOMAIN`, `KOHA_TIMEZONE` | env.*.enc |
 | **Database** | `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_ROOT_PASS` | env.*.enc (secret) |
-| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE`, `KOHA_ES_INDEXER_BATCH_SIZE`, `KOHA_ES_INDEXER_WAIT_TIMEOUT`, `KOHA_ES_INDEXER_MONITOR_INTERVAL`, `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS` | env.*.enc |
+| **Elasticsearch** | `ELASTICSEARCH_HOST`, `USE_ELASTICSEARCH`, `KOHA_SEARCH_ENGINE`, `KOHA_ES_INDEXER_AUTOSTART`, `KOHA_ES_INDEXER_BATCH_SIZE`, `KOHA_ES_INDEXER_WAIT_TIMEOUT`, `KOHA_ES_INDEXER_MONITOR_INTERVAL`, `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS` | env.*.enc |
 | **RabbitMQ** | `RABBITMQ_USER`, `RABBITMQ_PASS`, `MB_HOST`, `MB_PORT` | env.*.enc (secret) |
 | **Memcached** | `MEMCACHED_SERVERS` | env.*.enc |
 | **Edge Domains** | `KOHA_OPAC_SERVERNAME`, `KOHA_INTRANET_SERVERNAME` | env.*.enc |
