@@ -87,6 +87,8 @@ services:
         target: db_password
       - source: db_root_password
         target: db_root_password
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb --protocol=tcp -h 127.0.0.1 -uroot --password=\"$$(cat /run/secrets/db_root_password)\" -e 'SELECT 1' >/dev/null || exit 1"]
     deploy:
       replicas: 1
       restart_policy:

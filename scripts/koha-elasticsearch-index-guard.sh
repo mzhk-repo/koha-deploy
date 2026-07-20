@@ -77,6 +77,7 @@ done
 
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/orchestrator-env.sh"
+trap orchestrator_env_cleanup EXIT
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/docker-runtime.sh"
 
@@ -88,7 +89,7 @@ is_true() {
 }
 
 load_runtime_context() {
-  ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+  resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
   KOHA_COMPOSE_FILE="$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")"
   DOCKER_RUNTIME_COMPOSE_FILE="${KOHA_COMPOSE_FILE}"
   DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"

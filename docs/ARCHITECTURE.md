@@ -97,12 +97,16 @@
 
 ## 7) Дані і томи
 
-Зовнішні bind-path томи задаються в `.env`:
+Зовнішні bind-path томи задаються runtime env (SOPS `env.prod.enc` / `env.dev.enc` або explicit `ORCHESTRATOR_ENV_FILE`):
 1. `VOL_DB_PATH`
 2. `VOL_ES_PATH`
 3. `VOL_KOHA_CONF`
 4. `VOL_KOHA_DATA`
 5. `VOL_KOHA_LOGS`
+
+Deploy resolver визначає `VOL_DB_PATH` із відповідного SOPS env-файла: `env.prod.enc` для production та `env.dev.enc` для development. Production не має неявних fallback на `/tmp/env.decrypted` або `.env`.
+
+Перед `init-volumes.sh` deploy перевіряє resolved `VOL_DB_PATH`. Для звичайного production redeploy каталог має містити `ibdata1` і `mysql/`; для усвідомленого першого запуску на новому сервері потрібно одноразово передати `ORCHESTRATOR_ALLOW_DB_INIT=true`.
 
 ## 8) Операційні скрипти
 

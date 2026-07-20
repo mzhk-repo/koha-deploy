@@ -51,7 +51,8 @@ done
 
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/orchestrator-env.sh"
-ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
+trap orchestrator_env_cleanup EXIT
 echo "🌍 Loading environment variables from ${ENV_FILE}..."
 load_orchestrator_env_file "${ENV_FILE}"
 

@@ -54,6 +54,7 @@ cleanup() {
   if [[ "${#SECRET_TMP_FILES[@]}" -gt 0 ]]; then
     rm -f "${SECRET_TMP_FILES[@]}"
   fi
+  orchestrator_env_cleanup
 }
 
 trap cleanup EXIT
@@ -84,7 +85,7 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
 [[ -s "${ENV_FILE}" ]] || die "env file is missing or empty: ${ENV_FILE}"
 
 if [[ -n "${WRITE_ENV_FILE}" && "${WRITE_ENV_FILE}" != "${ENV_FILE}" ]]; then

@@ -148,7 +148,8 @@ fi
 . "${SCRIPT_DIR}/lib/orchestrator-env.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/docker-runtime.sh"
-ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
+resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
+trap orchestrator_env_cleanup EXIT
 COMPOSE_FILE="$(detect_compose_file)"
 DOCKER_RUNTIME_COMPOSE_FILE="${COMPOSE_FILE}"
 DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
