@@ -237,3 +237,19 @@
   - `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`;
   - `bash scripts/verify-env.sh --example-only`;
   - `git diff --check`.
+
+### 13) Deploy resolution: додано автоматичне SOPS розшифрування env.prod.enc / env.dev.enc
+
+- Контекст (2026-07-20):
+  - під час деплою (включаючи GitHub Actions pipeline `.github/workflows/main.yml`), якщо `ORCHESTRATOR_ENV_FILE` не передано у скрипт, деплоєр робив fallback на порожній або дефолтний `.env`;
+  - це призводило до того, що Swarm створював нову порожню базу даних для Koha замість підключення існуючого тому `/data2/volumes/koha-volumes/mysql_data` з `env.prod.enc`.
+
+- Оновлено:
+  - `scripts/lib/orchestrator-env.sh`;
+  - `scripts/deploy-orchestrator-swarm.sh`.
+
+- Зміни:
+  - `deploy-orchestrator-swarm.sh` та `orchestrator-env.sh` тепер автоматично визначають цільове середовище (`production`/`development`, `prod`/`dev` або гілку `main`/`dev`);
+  - при відсутності розшифрованого `ORCHESTRATOR_ENV_FILE` деплоєр автоматично розшифровує відповідний `env.prod.enc` або `env.dev.enc` через `sops` у тимчасову пам'ять `/dev/shm`;
+  - після завершення деплою тимчасовий розшифрований файл безпечно видаляється (`shred`/`rm`).
+

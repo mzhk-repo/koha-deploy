@@ -23,6 +23,13 @@ cleanup() {
     "${RUNTIME_ENV_FILE:-}" \
     "${PROJECT_ROOT}/.koha.stack.raw.*.yml" \
     "${PROJECT_ROOT}/.koha.stack.deploy.*.yml"
+  if [[ -n "${AUTO_DECRYPTED_ENV:-}" && -f "${AUTO_DECRYPTED_ENV}" ]]; then
+    if command -v shred >/dev/null 2>&1; then
+      shred -u "${AUTO_DECRYPTED_ENV}" 2>/dev/null || rm -f "${AUTO_DECRYPTED_ENV}"
+    else
+      rm -f "${AUTO_DECRYPTED_ENV}"
+    fi
+  fi
   find "${PROJECT_ROOT}" -maxdepth 1 -type f \
     \( -name ".${STACK_NAME}.env.*" \
       -o -name ".${STACK_NAME}.stack.raw.*.yml" \
@@ -376,11 +383,40 @@ deploy_swarm() {
   run_validation_scripts "${compose_file}"
 
   if [[ ! -f "${ENV_FILE}" ]]; then
-    if [[ -f ".env" ]]; then
+    local raw_env="${ENVIRONMENT_NAME:-${SERVER_ENV:-${ENVIRONMENT:-}}}"
+    local target_env="dev"
+    case "${raw_env}" in
+      prod|production) target_env="prod" ;;
+      dev|development) target_env="dev" ;;
+      "")
+        if [[ -d "${PROJECT_ROOT}/.git" ]] && command -v git >/dev/null 2>&1; then
+          local current_branch
+          current_branch="$(git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+          if [[ "${current_branch}" == "main" ]]; then
+            target_env="prod"
+          fi
+        fi
+        ;;
+    esac
+
+    local enc_file="${PROJECT_ROOT}/env.${target_env}.enc"
+    if [[ -f "${enc_file}" ]] && command -v sops >/dev/null 2>&1; then
+      log "Decrypting ${enc_file} via sops for ENVIRONMENT_NAME=${target_env}..."
+      AUTO_DECRYPTED_ENV="$(mktemp /dev/shm/env.${STACK_NAME}.${target_env}.XXXXXX 2>/dev/null || mktemp "${PROJECT_ROOT}/.${STACK_NAME}.env.${target_env}.XXXXXX")"
+      chmod 600 "${AUTO_DECRYPTED_ENV}"
+      if sops --decrypt --input-type dotenv --output-type dotenv "${enc_file}" > "${AUTO_DECRYPTED_ENV}"; then
+        ENV_FILE="${AUTO_DECRYPTED_ENV}"
+        export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
+      else
+        rm -f "${AUTO_DECRYPTED_ENV}"
+        log "ERROR: Failed to decrypt ${enc_file} via sops"
+        exit 1
+      fi
+    elif [[ -f ".env" ]]; then
       ENV_FILE=".env"
       log "WARNING: env.*.enc не знайдено або ORCHESTRATOR_ENV_FILE не передано. Fallback на локальний .env — тільки для dev-середовища."
     else
-      log "ERROR: env file not found (${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}) and .env missing"
+      log "ERROR: env file not found (${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}) and failed to decrypt ${enc_file}"
       exit 1
     fi
   fi
