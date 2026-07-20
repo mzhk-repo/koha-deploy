@@ -106,6 +106,58 @@ Textfile metrics:
 6. `koha-elasticsearch --rebuild`
 7. verify (DB count + ES count)
 
+### 7.1. Якщо після backup змінювалися DB/RabbitMQ паролі
+
+Backup set містить `koha_config.tar.gz`, тому full restore повертає `koha-conf.xml` у стан на момент backup. Якщо після створення backup змінювалися `DB_PASS`, `DB_ROOT_PASS` або `RABBITMQ_PASS` в `env.<env>.enc`, після restore config може містити старі credentials.
+
+Ознаки:
+
+- `koha` довго лишається `health: starting`;
+- `koha-es-indexer` падає з `task: non-zero exit (1)`;
+- у логах є:
+  - `Access denied for user 'koha_db'`;
+  - `Access refused for user 'koha_mq'`.
+
+Дії:
+
+1. Оновити Swarm versioned secrets і service specs з актуального `env.<env>.enc` перед або після restore.
+2. Після відновлення `koha_config.tar.gz` пропатчити live `koha-conf.xml` актуальними значеннями:
+
+   ```bash
+   ENV_TMP="$(mktemp /dev/shm/koha-env.XXXXXX)"
+   chmod 600 "${ENV_TMP}"
+   sops --decrypt --input-type dotenv --output-type dotenv env.dev.enc > "${ENV_TMP}"
+
+   ./scripts/bootstrap-live-configs.sh \
+     --env-file "${ENV_TMP}" \
+     --modules db,message-broker,verify \
+     --no-restart
+
+   rm -f "${ENV_TMP}"
+   ```
+
+3. Якщо RabbitMQ data volume не очищувався або user вже існував, оновити пароль існуючого RabbitMQ user до значення з актуального `env.<env>.enc`:
+
+   ```bash
+   # Не source-ити decrypted dotenv напряму, якщо значення містять пробіли.
+   # Використати штатний безпечний env-loader.
+   . scripts/lib/autonomous-env.sh
+   load_autonomous_env "$PWD" dev
+
+   rabbit_cid="$(docker ps -q --filter label=com.docker.swarm.service.name=koha_rabbitmq | head -n 1)"
+   docker exec "${rabbit_cid}" rabbitmqctl change_password "${RABBITMQ_USER}" "${RABBITMQ_PASS}"
+   ```
+
+4. Перезапустити `koha` і `koha-es-indexer`, після чого перевірити health:
+
+   ```bash
+   docker service update --force koha_koha
+   docker service update --force koha_koha-es-indexer
+   docker service ls | grep '^koha_'
+   ```
+
+Примітка: `chown: changing ownership of '.../koha-conf.xml': Operation not permitted` під час restore не є блокером, якщо наступний `verify` проходить і сервіси стають `healthy`.
+
 ## 8. PITR restore (до timestamp)
 
 Приклад:
@@ -165,3 +217,7 @@ docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
   - перевірити `koha-conf.xml` і `MEMCACHED_SERVERS` в `env.<env>.enc`
 - RabbitMQ fallback (SQL polling):
   - перевірити плагіни `rabbitmq_stomp` / `rabbitmq_web_stomp`
+- `koha`/`koha-es-indexer` після restore отримують `Access denied for user 'koha_db'` або `Access refused for user 'koha_mq'`:
+  - перевірити, чи не були змінені `DB_PASS` / `RABBITMQ_PASS` після backup;
+  - виконати процедуру з розділу `7.1`;
+  - не source-ити decrypted dotenv напряму, якщо там є значення з пробілами.
