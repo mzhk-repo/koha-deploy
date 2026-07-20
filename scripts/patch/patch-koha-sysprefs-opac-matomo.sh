@@ -53,7 +53,7 @@ fi
 [ -f "${SOURCE_PATH}" ] || die "Matomo snippet source file not found: ${SOURCE_PATH}"
 
 tmp_js="$(mktemp)"
-trap 'rm -f "${tmp_js}"' EXIT
+trap 'rm -f "${tmp_js}"; orchestrator_env_cleanup' EXIT
 
 cp -a "${SOURCE_PATH}" "${tmp_js}"
 sed -i "s|__MATOMO_BASE_URL__|${MATOMO_BASE_URL}|g" "${tmp_js}"

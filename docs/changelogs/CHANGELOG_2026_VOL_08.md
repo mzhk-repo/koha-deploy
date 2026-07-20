@@ -253,3 +253,20 @@
   - при відсутності розшифрованого `ORCHESTRATOR_ENV_FILE` деплоєр автоматично розшифровує відповідний `env.prod.enc` або `env.dev.enc` через `sops` у тимчасову пам'ять `/dev/shm`;
   - після завершення деплою тимчасовий розшифрований файл безпечно видаляється (`shred`/`rm`).
 
+### 14) Deploy hardening: fail-closed production env і MariaDB datadir preflight
+
+- Контекст (2026-07-20):
+  - неявний fallback на stale `/tmp/env.decrypted` або локальний `.env` міг підмінити `VOL_DB_PATH` під час production redeploy;
+  - Swarm MariaDB healthcheck використовував відсутню plaintext password env-змінну, через що створював регулярні `Access denied` у логах.
+
+- Оновлено:
+  - `scripts/lib/orchestrator-env.sh`;
+  - `scripts/deploy-orchestrator-swarm.sh` і deploy-adjacent helper-скрипти;
+  - `docker-compose.swarm.yml`;
+  - `docs/ARCHITECTURE.md`.
+
+- Зміни:
+  - production resolver використовує лише explicit існуючий env-файл або SOPS `env.prod.enc`; `.env` лишився fallback тільки для development;
+  - перед initialization та stack deploy перевіряється resolved `VOL_DB_PATH`; production datadir має містити `ibdata1` і `mysql/`;
+  - `ORCHESTRATOR_ALLOW_DB_INIT=true` одноразово дозволяє свідомий перший запуск із порожнім datadir;
+  - Swarm healthcheck виконує authenticated `SELECT 1` із `/run/secrets/db_root_password`.

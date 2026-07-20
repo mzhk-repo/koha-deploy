@@ -67,6 +67,7 @@ chmod 600 "${ENV_TMP}"
 sops --decrypt --input-type dotenv --output-type dotenv env.dev.enc > "${ENV_TMP}"
 
 ORCHESTRATOR_MODE=swarm \
+ORCHESTRATOR_ALLOW_DB_INIT=false \
 ENVIRONMENT_NAME=development \
 STACK_NAME=koha \
 ORCHESTRATOR_ENV_FILE="${ENV_TMP}" \

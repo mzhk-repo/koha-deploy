@@ -4,9 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+
+# shellcheck source=scripts/lib/orchestrator-env.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/orchestrator-env.sh"
 MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-koha}"
-ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
+ENV_FILE="${ORCHESTRATOR_ENV_FILE:-}"
 RUNTIME_ENV_FILE=""
 RAW_MANIFEST=""
 DEPLOY_MANIFEST=""
@@ -23,13 +27,7 @@ cleanup() {
     "${RUNTIME_ENV_FILE:-}" \
     "${PROJECT_ROOT}/.koha.stack.raw.*.yml" \
     "${PROJECT_ROOT}/.koha.stack.deploy.*.yml"
-  if [[ -n "${AUTO_DECRYPTED_ENV:-}" && -f "${AUTO_DECRYPTED_ENV}" ]]; then
-    if command -v shred >/dev/null 2>&1; then
-      shred -u "${AUTO_DECRYPTED_ENV}" 2>/dev/null || rm -f "${AUTO_DECRYPTED_ENV}"
-    else
-      rm -f "${AUTO_DECRYPTED_ENV}"
-    fi
-  fi
+  orchestrator_env_cleanup
   find "${PROJECT_ROOT}" -maxdepth 1 -type f \
     \( -name ".${STACK_NAME}.env.*" \
       -o -name ".${STACK_NAME}.stack.raw.*.yml" \
@@ -83,6 +81,36 @@ render_versioned_env_secret() {
     --write-env-file "${ENV_FILE}" >/dev/null
 }
 
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_db_volume_preflight() {
+  local helper_image="${INIT_VOLUMES_HELPER_IMAGE:-alpine:3.20}"
+
+  load_orchestrator_env_file "${ENV_FILE}"
+  [[ -n "${VOL_DB_PATH:-}" ]] || { log "ERROR: VOL_DB_PATH is missing in ${ENV_FILE}"; exit 1; }
+  [[ "${VOL_DB_PATH}" == /* ]] || { log "ERROR: VOL_DB_PATH must be absolute: ${VOL_DB_PATH}"; exit 1; }
+  log "Resolved VOL_DB_PATH=${VOL_DB_PATH} (environment=${ORCHESTRATOR_RESOLVED_ENVIRONMENT})"
+
+  if [[ "${ORCHESTRATOR_RESOLVED_ENVIRONMENT}" != "prod" ]] || is_true "${ORCHESTRATOR_ALLOW_DB_INIT:-false}"; then
+    if [[ "${ORCHESTRATOR_RESOLVED_ENVIRONMENT}" == "prod" ]]; then
+      log "WARNING: ORCHESTRATOR_ALLOW_DB_INIT=true permits initialization of an empty MariaDB datadir"
+    fi
+    return 0
+  fi
+
+  command -v docker >/dev/null 2>&1 || { log "ERROR: docker is required to validate existing MariaDB datadir"; exit 1; }
+  if ! docker run --rm --mount "type=bind,src=${VOL_DB_PATH},dst=/var/lib/mysql,readonly" "${helper_image}" \
+    sh -ceu '[ -f /var/lib/mysql/ibdata1 ] && [ -d /var/lib/mysql/mysql ]'; then
+    log "ERROR: production VOL_DB_PATH does not contain an initialized MariaDB datadir: ${VOL_DB_PATH}"
+    log "HINT: set ORCHESTRATOR_ALLOW_DB_INIT=true only for an intentional first deployment"
+    exit 1
+  fi
+}
 runtime_env_has_key() {
   local env_file="$1"
   local expected_key="$2"
@@ -380,48 +408,13 @@ deploy_swarm() {
     exit 1
   fi
 
+
   run_validation_scripts "${compose_file}"
-
-  if [[ ! -f "${ENV_FILE}" ]]; then
-    local raw_env="${ENVIRONMENT_NAME:-${SERVER_ENV:-${ENVIRONMENT:-}}}"
-    local target_env="dev"
-    case "${raw_env}" in
-      prod|production) target_env="prod" ;;
-      dev|development) target_env="dev" ;;
-      "")
-        if [[ -d "${PROJECT_ROOT}/.git" ]] && command -v git >/dev/null 2>&1; then
-          local current_branch
-          current_branch="$(git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-          if [[ "${current_branch}" == "main" ]]; then
-            target_env="prod"
-          fi
-        fi
-        ;;
-    esac
-
-    local enc_file="${PROJECT_ROOT}/env.${target_env}.enc"
-    if [[ -f "${enc_file}" ]] && command -v sops >/dev/null 2>&1; then
-      log "Decrypting ${enc_file} via sops for ENVIRONMENT_NAME=${target_env}..."
-      AUTO_DECRYPTED_ENV="$(mktemp /dev/shm/env.${STACK_NAME}.${target_env}.XXXXXX 2>/dev/null || mktemp "${PROJECT_ROOT}/.${STACK_NAME}.env.${target_env}.XXXXXX")"
-      chmod 600 "${AUTO_DECRYPTED_ENV}"
-      if sops --decrypt --input-type dotenv --output-type dotenv "${enc_file}" > "${AUTO_DECRYPTED_ENV}"; then
-        ENV_FILE="${AUTO_DECRYPTED_ENV}"
-        export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
-      else
-        rm -f "${AUTO_DECRYPTED_ENV}"
-        log "ERROR: Failed to decrypt ${enc_file} via sops"
-        exit 1
-      fi
-    elif [[ -f ".env" ]]; then
-      ENV_FILE=".env"
-      log "WARNING: env.*.enc не знайдено або ORCHESTRATOR_ENV_FILE не передано. Fallback на локальний .env — тільки для dev-середовища."
-    else
-      log "ERROR: env file not found (${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}) and failed to decrypt ${enc_file}"
-      exit 1
-    fi
-  fi
+  resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
+  export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
 
   prepare_runtime_env_file
+  validate_db_volume_preflight
   render_versioned_env_secret
   run_ansible_secrets_if_configured
 
