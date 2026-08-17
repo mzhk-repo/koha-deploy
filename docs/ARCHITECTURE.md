@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-05-23
+Дата оновлення: 2026-08-14
 
 ## 1) Призначення репозиторію
 
@@ -14,11 +14,13 @@
 
 Сервіси в `docker-compose.yml` + `docker-compose.swarm.yml`:
 1. `koha` (зовнішній образ, рекомендовано digest pin у env)
-2. `koha-es-indexer` (окремий crash-only daemon для Elasticsearch indexing)
-3. `db` (`mariadb:11`)
-4. `es` (локальна збірка з `elasticsearch/Dockerfile`)
-5. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`, STOMP enabled)
-6. `memcached` (локальна збірка з `memcached/Dockerfile`)
+2. `koha-worker-default` (singleton STOMP consumer для `default`)
+3. `koha-worker-long-tasks` (singleton STOMP consumer для `long_tasks`)
+4. `koha-es-indexer` (окремий crash-only daemon для Elasticsearch indexing)
+5. `db` (`mariadb:11`)
+6. `es` (локальна збірка з `elasticsearch/Dockerfile`)
+7. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`, STOMP enabled)
+8. `memcached` (локальна збірка з `memcached/Dockerfile`)
 
 Зовнішній доступ:
 1. External Cloudflare Tunnel (окремий стек/інфраструктура)
@@ -29,6 +31,8 @@
 - `koha` host-ports вимкнені; зовнішній доступ іде через `Cloudflare Tunnel -> Traefik -> Koha`;
 - sidecar сервіси `es/rabbitmq/memcached` будуються локально у deploy-потоці;
 - `koha-es-indexer` винесений з основного Koha container в окремий Swarm service з власними resource limits.
+- `koha-worker-default` і `koha-worker-long-tasks` мають лише внутрішню `kohanet`; вони не мають портів,
+  `proxy-net` або `app_env_payload`.
 
 ## 3) Мережева модель
 
@@ -60,10 +64,20 @@
 
 ## 4.1) Background jobs model
 
-1. Основний service `koha` володіє вбудованими Koha background jobs workers для черг `default` і `long_tasks`.
-2. Якщо `JobsNotificationMethod=STOMP`, healthcheck `koha` перевіряє не тільки intranet HTTP, а й RabbitMQ Management API consumers для `${memcached_namespace}-default` і `${memcached_namespace}-long_tasks`.
-3. Якщо будь-яка обовʼязкова черга має `consumers=0`, `koha` стає unhealthy, а Swarm restart policy замінює task. Це покриває сценарій, коли `rabbitmq` перезапустився пізніше за `koha`, а живі worker-процеси втратили STOMP-підписку.
-4. Якщо `JobsNotificationMethod` не дорівнює `STOMP`, RabbitMQ consumer check пропускається після успішної HTTP-перевірки.
+1. `koha` є web-only service: `KOHA_BACKGROUND_WORKERS_AUTOSTART=false`, s6 user-services для workers
+   видаляються перед `/init`, а immutable config-mounted guard fail-closed блокує image-native `--start` і `--restart`.
+2. Healthcheck `koha` перевіряє тільки intranet HTTP. Втрата STOMP consumer не впливає на доступність OPAC/intranet.
+3. Кожна черга має окремий singleton service: `koha-worker-default` або `koha-worker-long-tasks`, з
+   `replicas: 1`, `MAX_PROCESSES=1`, update/rollback `stop-first` і `restart_policy.condition: any`.
+4. Worker pre-flight перевіряє live config, instance user, SQL, RabbitMQ TCP і
+   `Koha::BackgroundJob->connect`; startup завершується з помилкою, якщо `JobsNotificationMethod` не `STOMP`.
+5. Foreground supervisor контролює exact queue `${memcached_namespace}-<queue>` через RabbitMQ Management API.
+   Якщо consumer не дорівнює одному протягом 90 секунд, завершується тільки worker task. При stop parent worker
+   призупиняється, активному job надається queue-specific drain timeout (default 300 s, long_tasks 1800 s).
+6. Web updates застосовуються `start-first` з rollback, workers — `stop-first`, щоб не створювати два consumers
+   однієї черги. Перший migration deploy виконується у дві фази: web без embedded workers, потім workers.
+7. RabbitMQ TCP keepalive і persistence не входять у цей change: поточний Koha `Net::Stomp` не вмикає
+   `SO_KEEPALIVE`, тому container sysctl сам по собі не дає потрібного ефекту.
 
 ## 5) Конфігураційна модель
 
@@ -112,13 +126,14 @@ Deploy resolver визначає `VOL_DB_PATH` із відповідного SOP
 
 Основні скрипти:
 1. `scripts/verify-env.sh` — валідація env-моделі.
-2. `scripts/deploy-orchestrator-swarm.sh` — Swarm deploy: validation, volume init, versioned secrets, stack deploy, bootstrap і ES guard.
+2. `scripts/deploy-orchestrator-swarm.sh` — Swarm deploy: validation, volume init, versioned secrets/configs, двофазна worker migration, stack deploy, bootstrap і runtime guards.
 3. `scripts/bootstrap-live-configs.sh` — оркестрація live patch modules.
 4. `scripts/koha-elasticsearch-index-guard.sh` — smart ES guard і перевірка RabbitMQ consumer для `koha-es-indexer`.
-5. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
-6. `scripts/restore.sh` — restore/PITR-процедури.
-7. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
-8. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
+5. `scripts/koha-background-workers-guard.sh` — post-deploy перевірка ізоляції web і рівно одного consumer для кожної worker queue.
+6. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
+7. `scripts/restore.sh` — restore/PITR-процедури.
+8. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
+9. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
 
 ## 9) CI/CD архітектура
 
@@ -140,8 +155,8 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 3. SOPS decrypt runtime env у тимчасовий файл
 4. `scripts/deploy-orchestrator-swarm.sh` у `ORCHESTRATOR_MODE=swarm`
 5. `docker stack deploy` з rendered manifest
-6. post-deploy `bootstrap-live-configs.sh`, `koha-elasticsearch-index-guard.sh`, password prefs lockdown
-7. health/runtime checks для `koha` і `koha-es-indexer`
+6. post-deploy `bootstrap-live-configs.sh`, worker isolation guard, `koha-elasticsearch-index-guard.sh`, password prefs lockdown
+7. health/runtime checks для `koha`, обох workers і `koha-es-indexer`
 
 ## 10) Правила і обмеження
 

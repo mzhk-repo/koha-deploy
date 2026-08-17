@@ -72,6 +72,7 @@
 8. **SOPS env-flow**: `env.dev.enc`/`env.prod.enc` як SSOT; безпечний dotenv-parser без `source`/eval; автономні скрипти на `/dev/shm`.
 9. **IaC completeness**: всі ключові sysprefs/config керовані через bootstrap модулі (OIDC, MS365 Identity Provider, Matomo, CSP, SearchEngine, RESTBasicAuth, domain, DB credentials).
 10. **Elasticsearch index guard**: smart guard з auto-reindex при deploji на порожньому volume.
+11. **STOMP worker isolation**: `default` і `long_tasks` працюють як окремі singleton Swarm services; HTTP availability web не залежить від consumer health.
 
 ### Відомі обмеження
 

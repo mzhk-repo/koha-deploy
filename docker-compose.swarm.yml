@@ -9,7 +9,7 @@ services:
       - /bin/sh
       - -ec
       - |
-        while IFS= read -r $$line || [ -n "$$line" ]; do
+        while IFS= read -r line || [ -n "$$line" ]; do
           case "$$line" in
             ""|\#*) continue ;;
           esac
@@ -46,6 +46,7 @@ services:
       MB_USER: ${RABBITMQ_USER}
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
       KOHA_ES_INDEXER_AUTOSTART: ${KOHA_ES_INDEXER_AUTOSTART:-false}
+      KOHA_BACKGROUND_WORKERS_AUTOSTART: ${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
@@ -62,11 +63,116 @@ services:
       retries: 3
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        failure_action: rollback
+        monitor: 120s
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        failure_action: pause
+        monitor: 120s
+        order: start-first
       restart_policy:
         condition: any
         delay: 10s
         max_attempts: 5
         window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  koha-worker-default: &koha_background_worker_swarm
+    cpus: !reset null
+    mem_limit: !reset null
+    pids_limit: !reset null
+    restart: !reset null
+    depends_on: !reset null
+    env_file: !reset []
+    environment: !override
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      TZ: ${KOHA_TIMEZONE}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_DEFAULT_DRAIN_TIMEOUT:-300}
+      KOHA_WORKER_QUEUE: default
+      MAX_PROCESSES: ${KOHA_WORKER_DEFAULT_MAX_PROCESSES:-1}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "${KOHA_WORKER_DEFAULT_CPUS:-0.25}"
+          memory: ${KOHA_WORKER_DEFAULT_MEM_LIMIT:-512m}
+          pids: 256
+      update_config:
+        parallelism: 1
+        failure_action: pause
+        monitor: 120s
+        order: stop-first
+      rollback_config:
+        parallelism: 1
+        failure_action: pause
+        monitor: 120s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 0
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+  koha-worker-long-tasks:
+    <<: *koha_background_worker_swarm
+    environment: !override
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      TZ: ${KOHA_TIMEZONE}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_LONG_TASKS_DRAIN_TIMEOUT:-1800}
+      KOHA_WORKER_QUEUE: long_tasks
+      MAX_PROCESSES: ${KOHA_WORKER_LONG_TASKS_MAX_PROCESSES:-1}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "${KOHA_WORKER_LONG_TASKS_CPUS:-0.50}"
+          memory: ${KOHA_WORKER_LONG_TASKS_MEM_LIMIT:-1g}
+          pids: 256
+      update_config:
+        parallelism: 1
+        failure_action: pause
+        monitor: 120s
+        order: stop-first
+      rollback_config:
+        parallelism: 1
+        failure_action: pause
+        monitor: 120s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 0
       placement:
         constraints:
           - node.labels.app_zone == manager
@@ -230,3 +336,9 @@ secrets:
 configs:
   rabbitmq_enabled_plugins:
     file: ./rabbitmq/enabled_plugins
+  koha_worker_autostart_guard: !override
+    external: true
+    name: ${KOHA_WORKER_AUTOSTART_GUARD_CONFIG_NAME}
+  koha_background_worker_supervisor: !override
+    external: true
+    name: ${KOHA_BACKGROUND_WORKER_SUPERVISOR_CONFIG_NAME}

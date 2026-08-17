@@ -4,7 +4,25 @@ services:
     command:
       - /bin/sh
       - -lc
-      - a2enmod remoteip headers >/dev/null 2>&1 || true; exec /init
+      - |
+        set -eu
+        case "$${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}" in
+          true|false) ;;
+          *) echo "ERROR: KOHA_BACKGROUND_WORKERS_AUTOSTART must be true or false" >&2; exit 64 ;;
+        esac
+        if [ "$${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}" = "false" ]; then
+          test -x /usr/local/sbin/koha-worker || { echo "ERROR: worker autostart guard is missing" >&2; exit 1; }
+          [ "$$(command -v koha-worker)" = /usr/local/sbin/koha-worker ] \
+            || { echo "ERROR: koha-worker guard is not first in PATH" >&2; exit 1; }
+          for s6_worker in worker worker-long-tasks; do
+            s6_marker="/etc/s6-overlay/s6-rc.d/user/contents.d/$$s6_worker"
+            [ -e "$$s6_marker" ] \
+              || { echo "ERROR: expected s6 worker marker is missing: $$s6_marker" >&2; exit 1; }
+            rm -f "$$s6_marker"
+          done
+        fi
+        a2enmod remoteip headers >/dev/null 2>&1 || true
+        exec /init
     restart: unless-stopped
     logging:
       driver: json-file
@@ -73,6 +91,7 @@ services:
 
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
       KOHA_ES_INDEXER_AUTOSTART: ${KOHA_ES_INDEXER_AUTOSTART:-false}
+      KOHA_BACKGROUND_WORKERS_AUTOSTART: ${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
 
@@ -96,58 +115,89 @@ services:
       - ${VOL_KOHA_CONF}/${KOHA_INSTANCE}:/etc/koha/sites/default
       - ${VOL_KOHA_DATA}:/var/lib/koha
       - ${VOL_KOHA_LOGS}:/var/log/koha
+    configs:
+      - source: koha_worker_autostart_guard
+        target: /usr/local/sbin/koha-worker
+        mode: "0555"
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - |
-          wget -q --spider "http://localhost:$${KOHA_INTRANET_PORT:-8081}" || exit 1
-
-          export KOHA_HOME="/usr/share/koha"
-          export PERL5LIB="/usr/share/koha/lib"
-
-          koha_user="$${KOHA_INSTANCE}-koha"
-          jobs_method="$$(runuser --preserve-environment -u "$$koha_user" -- \
-            perl -I/usr/share/koha/lib -MC4::Context -e 'print C4::Context->preference(q(JobsNotificationMethod)) // q(STOMP);' 2>/dev/null || printf 'STOMP')"
-          if [ "$$jobs_method" != "STOMP" ]; then
-            exit 0
-          fi
-
-          runuser --preserve-environment -u "$$koha_user" -- \
-            perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
-              sub xml_value {
-                my ($$doc, $$name) = @_;
-                my ($$node) = $$doc->findnodes("//message_broker/$$name");
-                return $$node ? $$node->textContent : "";
-              }
-              sub url_escape {
-                my ($$value) = @_;
-                $$value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($$1))/eg;
-                return $$value;
-              }
-
-              my $$doc = XML::LibXML->load_xml(location => $$ENV{KOHA_CONF});
-              my $$host = xml_value($$doc, "hostname") || $$ENV{MB_HOST} || "rabbitmq";
-              my $$user = xml_value($$doc, "username") || $$ENV{MB_USER} || "";
-              my $$pass = xml_value($$doc, "password") || $$ENV{MB_PASS} || "";
-              my $$vhost = xml_value($$doc, "vhost") || "/";
-              my $$namespace = C4::Context->config("memcached_namespace") || "koha_" . ($$ENV{KOHA_INSTANCE} || "library");
-              my $$auth = encode_base64("$$user:$$pass", "");
-              my $$http = HTTP::Tiny->new(timeout => 5);
-
-              for my $$suffix (qw(default long_tasks)) {
-                my $$queue = $$namespace . "-" . $$suffix;
-                my $$url = "http://$$host:15672/api/queues/" . url_escape($$vhost) . "/" . url_escape($$queue);
-                my $$response = $$http->get($$url, { headers => { Authorization => "Basic $$auth" } });
-                die "RabbitMQ Management API check failed for $$queue\n" unless $$response->{success};
-                my ($$consumers) = $$response->{content} =~ /"consumers"\s*:\s*(\d+)/;
-                $$consumers ||= 0;
-                die "RabbitMQ queue $$queue has no consumers\n" if $$consumers < 1;
-              }
-            '
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${KOHA_INTRANET_PORT:-8081} || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  koha-worker-default: &koha_background_worker
+    image: ${KOHA_IMAGE}
+    command: ["/usr/local/sbin/koha-background-worker-supervisor"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILE:-3}"
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${KOHA_WORKER_DEFAULT_MEM_LIMIT:-512m}
+    cpus: ${KOHA_WORKER_DEFAULT_CPUS:-0.25}
+    networks:
+      - kohanet
+    environment: &koha_background_worker_environment
+      MYSQL_SERVER: ${DB_HOST:-db}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASS}
+      DB_NAME: ${DB_NAME}
+      KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
+      KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+      TZ: ${KOHA_TIMEZONE}
+      MB_HOST: ${MB_HOST:-rabbitmq}
+      MB_PORT: ${MB_PORT:-61613}
+      MB_USER: ${RABBITMQ_USER}
+      MB_PASS: ${RABBITMQ_PASS}
+      KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_DEFAULT_DRAIN_TIMEOUT:-300}
+      KOHA_WORKER_QUEUE: default
+      MAX_PROCESSES: ${KOHA_WORKER_DEFAULT_MAX_PROCESSES:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ${VOL_KOHA_CONF}:/etc/koha/sites:ro
+      - ${VOL_KOHA_CONF}/${KOHA_INSTANCE}:/etc/koha/sites/default:ro
+      - ${VOL_KOHA_DATA}:/var/lib/koha
+      - ${VOL_KOHA_LOGS}:/var/log/koha
+    configs:
+      - source: koha_background_worker_supervisor
+        target: /usr/local/sbin/koha-background-worker-supervisor
+        mode: "0555"
+    healthcheck:
+      test: ["CMD", "/usr/local/sbin/koha-background-worker-supervisor", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 360s
+    stop_grace_period: 330s
+
+  koha-worker-long-tasks:
+    <<: *koha_background_worker
+    mem_limit: ${KOHA_WORKER_LONG_TASKS_MEM_LIMIT:-1g}
+    cpus: ${KOHA_WORKER_LONG_TASKS_CPUS:-0.50}
+    environment:
+      <<: *koha_background_worker_environment
+      KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_LONG_TASKS_DRAIN_TIMEOUT:-1800}
+      KOHA_WORKER_QUEUE: long_tasks
+      MAX_PROCESSES: ${KOHA_WORKER_LONG_TASKS_MAX_PROCESSES:-1}
+    stop_grace_period: 1830s
 
   koha-es-indexer:
     image: ${KOHA_IMAGE}
@@ -509,3 +559,9 @@ networks:
   proxy-net:
     external: true
     name: ${EXTERNAL_NETWORK}
+
+configs:
+  koha_worker_autostart_guard:
+    file: ./scripts/container/koha-worker-autostart-guard.sh
+  koha_background_worker_supervisor:
+    file: ./scripts/container/koha-background-worker-supervisor.sh

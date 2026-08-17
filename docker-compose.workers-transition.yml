@@ -1,0 +1,10 @@
+# First-deploy safety overlay. It is applied only by deploy-orchestrator-swarm.sh
+# while replacing a legacy Koha task that still owns embedded STOMP workers.
+services:
+  koha-worker-default:
+    deploy:
+      replicas: 0
+
+  koha-worker-long-tasks:
+    deploy:
+      replicas: 0

@@ -374,7 +374,7 @@ main() {
   fi
 
   log "[1/9] Stop stack"
-  for service in koha es rabbitmq memcached db; do
+  for service in koha-worker-default koha-worker-long-tasks koha-es-indexer koha es rabbitmq memcached db; do
     docker_runtime_scale_service "${service}" 0 || true
   done
 
@@ -425,6 +425,11 @@ main() {
   wait_service_healthy koha 360
 
   normalize_koha_conf_memcached
+
+  docker_runtime_scale_service koha-worker-default 1
+  docker_runtime_scale_service koha-worker-long-tasks 1
+  wait_service_healthy koha-worker-default 360
+  wait_service_healthy koha-worker-long-tasks 360
 
   log "[9/9] Reindex + verify"
   if is_true "${RESTORE_REINDEX}" && is_true "${USE_ELASTICSEARCH:-true}"; then

@@ -163,6 +163,7 @@ log "Selected modules: ${selected_modules[*]}"
 
 index=0
 needs_restart=false
+workers_need_restart=false
 has_patch_module=false
 for mod in "${selected_modules[@]}"; do
   if [ "${mod}" != "verify" ]; then
@@ -194,6 +195,11 @@ for mod in "${selected_modules[@]}"; do
   if [ "${mod}" != "verify" ]; then
     needs_restart=true
   fi
+  case "${mod}" in
+    db|timezone|memcached|message-broker)
+      workers_need_restart=true
+      ;;
+  esac
 
   index=$((index + 1))
 done
@@ -211,6 +217,17 @@ fi
 if ${needs_restart}; then
   log "Restarting koha to apply patched live config"
   docker_runtime_restart_service koha >/dev/null
+  if ${workers_need_restart}; then
+    for worker_service in koha-worker-default koha-worker-long-tasks; do
+      if [[ "$(docker_runtime_mode)" == "swarm" ]] \
+        && ! docker service inspect "${STACK_NAME:-koha}_${worker_service}" >/dev/null 2>&1; then
+        log "Worker service is not present yet, skip restart: ${worker_service}"
+        continue
+      fi
+      log "Restarting ${worker_service} to apply patched live config"
+      docker_runtime_restart_service "${worker_service}" >/dev/null
+    done
+  fi
   log "Restart complete"
 else
   log "No patch module requiring restart was run"
