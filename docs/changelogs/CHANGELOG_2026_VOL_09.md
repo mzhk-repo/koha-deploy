@@ -32,3 +32,23 @@
   - `shellcheck --severity=warning` для змінених shell scripts;
   - `docker compose ... config` для normal і transitional Swarm manifests;
   - `git diff --check`.
+
+### 2) CI/CD: виправлено Hadolint DL3066 через явне зазначення числових UID:GID
+
+- Контекст (2026-08-20):
+  - GitHub Actions CI (`shared-ci-cd.yml` Hadolint step) завершувався з exit code 1 через правило `DL3066: Non-numeric user-id may not be resolvable by host system`.
+
+- Оновлено:
+  - `memcached/Dockerfile`;
+  - `elasticsearch/Dockerfile`;
+  - `rabbitmq/Dockerfile`.
+
+- Зміни:
+  - у `memcached/Dockerfile` директиву `USER memcache` замінено на `USER 11211:11211`;
+  - у `elasticsearch/Dockerfile` директиву `USER elasticsearch` замінено на `USER 1000:1000`;
+  - у `rabbitmq/Dockerfile` директиву `USER rabbitmq` замінено на `USER 999:999`.
+
+- Перевірено:
+  - Hadolint `hadolint/hadolint:v2.15.1` для `memcached/Dockerfile`, `elasticsearch/Dockerfile`, `rabbitmq/Dockerfile` проходить без зауважень (exit code 0);
+  - `docker build` успішно збирає локальні образи `test-memcached`, `test-es`, `test-rabbitmq`;
+  - `git diff --check`.
