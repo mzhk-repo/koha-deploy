@@ -161,7 +161,8 @@ wait_until 'RabbitMQ STOMP Koha connect' runuser --preserve-environment -u "${KO
   perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $conn=Koha::BackgroundJob->connect; exit 1 unless $conn; $conn->disconnect;'
 
 export MAX_PROCESSES
-s6-setuidgid "${KOHA_INSTANCE}-koha" /usr/bin/perl /usr/share/koha/bin/workers/background_jobs_worker.pl --queue "${QUEUE}" &
+runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
+  /usr/bin/perl /usr/share/koha/bin/workers/background_jobs_worker.pl --queue "${QUEUE}" &
 WORKER_PID="$!"
 printf '%s\n' "${WORKER_PID}" > "${PID_FILE}"
 printf '%s\n' starting > "${STATUS_FILE}"

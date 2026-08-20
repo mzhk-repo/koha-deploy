@@ -1,5 +1,24 @@
 # CHANGELOG 2026 VOL 09
 
+### 4) STOMP workers: усунено restart loop через відсутній `s6-setuidgid`
+
+- Контекст (2026-08-20):
+  - після виділення `koha-worker-default` і `koha-worker-long-tasks` в окремі Swarm services обидва tasks
+    завершувались із кодом `127` одразу після pre-flight;
+  - runtime image не містить `s6-setuidgid`, який supervisor використовував для запуску
+    `background_jobs_worker.pl` від імені instance user.
+
+- Оновлено:
+  - `scripts/container/koha-background-worker-supervisor.sh`.
+
+- Зміни:
+  - запуск foreground worker переведено на наявний у Koha image `runuser --preserve-environment`;
+  - збережено запуск від `${KOHA_INSTANCE}-koha` і успадкування `MAX_PROCESSES`.
+
+- Перевірено:
+  - Swarm logs обох worker services підтвердили root cause: `s6-setuidgid: command not found`;
+  - локальні syntax/lint і rendered Compose manifest перевіряються перед наступним deploy.
+
 ### 1) STOMP background jobs: web і workers ізольовано у окремі Swarm services
 
 - Контекст (2026-08-14):
