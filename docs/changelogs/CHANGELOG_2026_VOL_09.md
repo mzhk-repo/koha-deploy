@@ -31,10 +31,14 @@
   - `scripts/deploy-orchestrator-swarm.sh`.
 
 - Зміни:
-  - supervisor відстежує окремо launcher і фактичний Perl worker; drain призупиняє прийом нових jobs
-    worker-процесом, чекає тільки його job children, а потім коректно завершує launcher;
+  - Perl worker запускається через `setpriv` як прямий child supervisor, а не через проміжний `runuser`;
+    drain призупиняє прийом нових jobs worker-процесом і чекає тільки його job children;
+  - zombie Perl worker більше не вважається running: supervisor завершує task і дозволяє Swarm створити
+    replacement замість зависання в `unhealthy`;
   - додано `ORCHESTRATOR_MODE=swarm-workers`: рендерить manifest лише для `koha-worker-default` і
     `koha-worker-long-tasks`, застосовує лише ці Swarm services та запускає їхній isolation guard.
+  - workers-only rendering передає локальні placeholder names для не використаних worker services secrets,
+    тому Compose не виводить хибні warnings про top-level secret interpolation.
 
 ### 1) STOMP background jobs: web і workers ізольовано у окремі Swarm services
 

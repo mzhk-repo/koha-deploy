@@ -8,7 +8,6 @@ MONITOR_INTERVAL="${KOHA_WORKER_MONITOR_INTERVAL:-30}"
 CONSUMER_GRACE_SECONDS="${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}"
 DRAIN_TIMEOUT="${KOHA_WORKER_DRAIN_TIMEOUT:-300}"
 MAX_PROCESSES="${MAX_PROCESSES:-1}"
-WORKER_LAUNCHER_PID=""
 WORKER_PID=""
 PID_FILE=""
 STATUS_FILE=""
@@ -99,12 +98,11 @@ worker_has_children() {
   pgrep -P "${WORKER_PID}" >/dev/null 2>&1
 }
 
-resolve_worker_pid() {
-  local pid
-  pid="$(pgrep -P "${WORKER_LAUNCHER_PID}" | head -n 1 || true)"
-  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "${pid}" 2>/dev/null || return 1
-  WORKER_PID="${pid}"
+worker_is_running() {
+  local state
+  kill -0 "${WORKER_PID}" 2>/dev/null || return 1
+  state="$(awk '{print $3}' "/proc/${WORKER_PID}/stat" 2>/dev/null || true)"
+  [[ "${state}" != "Z" ]]
 }
 
 drain_worker() {
@@ -119,7 +117,7 @@ drain_worker() {
   done
   kill -CONT "${WORKER_PID}" 2>/dev/null || true
   kill "${WORKER_PID}" 2>/dev/null || true
-  wait "${WORKER_LAUNCHER_PID}" 2>/dev/null || true
+  wait "${WORKER_PID}" 2>/dev/null || true
 }
 
 cleanup() {
@@ -170,15 +168,14 @@ wait_until 'RabbitMQ STOMP Koha connect' runuser --preserve-environment -u "${KO
   perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $conn=Koha::BackgroundJob->connect; exit 1 unless $conn; $conn->disconnect;'
 
 export MAX_PROCESSES
-runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
+setpriv --reuid "${KOHA_INSTANCE_UID}" --regid "${KOHA_INSTANCE_GID}" --init-groups \
   /usr/bin/perl /usr/share/koha/bin/workers/background_jobs_worker.pl --queue "${QUEUE}" &
-WORKER_LAUNCHER_PID="$!"
-wait_until 'background worker process' resolve_worker_pid
+WORKER_PID="$!"
 printf '%s\n' "${WORKER_PID}" > "${PID_FILE}"
 printf '%s\n' starting > "${STATUS_FILE}"
 
 missing_since=""
-while kill -0 "${WORKER_PID}" 2>/dev/null; do
+while worker_is_running; do
   consumers="$(rabbitmq_queue_consumers 2>/dev/null || printf 0)"
   if [[ "${consumers}" =~ ^[0-9]+$ && "${consumers}" -eq 1 ]]; then
     missing_since=""
@@ -197,4 +194,4 @@ while kill -0 "${WORKER_PID}" 2>/dev/null; do
   sleep "${MONITOR_INTERVAL}"
 done
 
-wait "${WORKER_LAUNCHER_PID}"
+wait "${WORKER_PID}"

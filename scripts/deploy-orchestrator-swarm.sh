@@ -521,6 +521,10 @@ deploy_swarm_workers() {
   render_versioned_worker_configs
 
   log "Rendering workers-only Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
+  KOHA_APP_ENV_PAYLOAD_SECRET_NAME="${KOHA_APP_ENV_PAYLOAD_SECRET_NAME:-workers-only-unused}" \
+  KOHA_DB_PASSWORD_SECRET_NAME="${KOHA_DB_PASSWORD_SECRET_NAME:-workers-only-unused}" \
+  KOHA_DB_ROOT_PASSWORD_SECRET_NAME="${KOHA_DB_ROOT_PASSWORD_SECRET_NAME:-workers-only-unused}" \
+  RABBITMQ_PASSWORD_SECRET_NAME="${RABBITMQ_PASSWORD_SECRET_NAME:-workers-only-unused}" \
   docker compose --env-file "${ENV_FILE}" \
     -f "${compose_file}" \
     -f "${swarm_file}" \
