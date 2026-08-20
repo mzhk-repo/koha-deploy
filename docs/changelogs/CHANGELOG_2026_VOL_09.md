@@ -35,6 +35,8 @@
     drain призупиняє прийом нових jobs worker-процесом і чекає тільки його job children;
   - zombie Perl worker більше не вважається running: supervisor завершує task і дозволяє Swarm створити
     replacement замість зависання в `unhealthy`;
+  - watchdog при неправильній кількості consumers завершує свій worker одразу, без long drain; це не дає
+    Swarm накопичувати паралельні unhealthy tasks і створювати дубльовані STOMP consumers;
   - додано `ORCHESTRATOR_MODE=swarm-workers`: рендерить manifest лише для `koha-worker-default` і
     `koha-worker-long-tasks`, застосовує лише ці Swarm services та запускає їхній isolation guard.
   - workers-only rendering передає локальні placeholder names для не використаних worker services secrets,

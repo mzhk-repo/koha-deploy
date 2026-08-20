@@ -120,6 +120,20 @@ drain_worker() {
   wait "${WORKER_PID}" 2>/dev/null || true
 }
 
+abort_worker() {
+  [[ -n "${WORKER_PID}" ]] || return 0
+  kill -0 "${WORKER_PID}" 2>/dev/null || return 0
+
+  log "Stopping ${QUEUE} worker after failed consumer ownership check"
+  kill "${WORKER_PID}" 2>/dev/null || true
+  local deadline=$((SECONDS + 10))
+  while kill -0 "${WORKER_PID}" 2>/dev/null && [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    sleep 1
+  done
+  kill -KILL "${WORKER_PID}" 2>/dev/null || true
+  wait "${WORKER_PID}" 2>/dev/null || true
+}
+
 cleanup() {
   if [[ -n "${PID_FILE}" && -f "${PID_FILE}" ]] && [[ "$(cat "${PID_FILE}" 2>/dev/null || true)" == "${WORKER_PID}" ]]; then
     rm -f "${PID_FILE}" "${STATUS_FILE}"
@@ -187,7 +201,7 @@ while worker_is_running; do
       log "RabbitMQ consumer missing for ${QUEUE} (consumers=${consumers})"
     elif [[ $((SECONDS - missing_since)) -ge "${CONSUMER_GRACE_SECONDS}" ]]; then
       log "ERROR: RabbitMQ consumer missing for ${QUEUE} for >=${CONSUMER_GRACE_SECONDS}s"
-      drain_worker
+      abort_worker
       exit 1
     fi
   fi
