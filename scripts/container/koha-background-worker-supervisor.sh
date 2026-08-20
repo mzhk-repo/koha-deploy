@@ -8,6 +8,7 @@ MONITOR_INTERVAL="${KOHA_WORKER_MONITOR_INTERVAL:-30}"
 CONSUMER_GRACE_SECONDS="${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}"
 DRAIN_TIMEOUT="${KOHA_WORKER_DRAIN_TIMEOUT:-300}"
 MAX_PROCESSES="${MAX_PROCESSES:-1}"
+WORKER_LAUNCHER_PID=""
 WORKER_PID=""
 PID_FILE=""
 STATUS_FILE=""
@@ -98,6 +99,14 @@ worker_has_children() {
   pgrep -P "${WORKER_PID}" >/dev/null 2>&1
 }
 
+resolve_worker_pid() {
+  local pid
+  pid="$(pgrep -P "${WORKER_LAUNCHER_PID}" | head -n 1 || true)"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  WORKER_PID="${pid}"
+}
+
 drain_worker() {
   [[ -n "${WORKER_PID}" ]] || return 0
   kill -0 "${WORKER_PID}" 2>/dev/null || return 0
@@ -110,7 +119,7 @@ drain_worker() {
   done
   kill -CONT "${WORKER_PID}" 2>/dev/null || true
   kill "${WORKER_PID}" 2>/dev/null || true
-  wait "${WORKER_PID}" 2>/dev/null || true
+  wait "${WORKER_LAUNCHER_PID}" 2>/dev/null || true
 }
 
 cleanup() {
@@ -163,7 +172,8 @@ wait_until 'RabbitMQ STOMP Koha connect' runuser --preserve-environment -u "${KO
 export MAX_PROCESSES
 runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
   /usr/bin/perl /usr/share/koha/bin/workers/background_jobs_worker.pl --queue "${QUEUE}" &
-WORKER_PID="$!"
+WORKER_LAUNCHER_PID="$!"
+wait_until 'background worker process' resolve_worker_pid
 printf '%s\n' "${WORKER_PID}" > "${PID_FILE}"
 printf '%s\n' starting > "${STATUS_FILE}"
 
@@ -187,4 +197,4 @@ while kill -0 "${WORKER_PID}" 2>/dev/null; do
   sleep "${MONITOR_INTERVAL}"
 done
 
-wait "${WORKER_PID}"
+wait "${WORKER_LAUNCHER_PID}"

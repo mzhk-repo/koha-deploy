@@ -19,6 +19,23 @@
   - Swarm logs обох worker services підтвердили root cause: `s6-setuidgid: command not found`;
   - локальні syntax/lint і rendered Compose manifest перевіряються перед наступним deploy.
 
+### 5) STOMP workers: коректний drain і ізольований Swarm redeploy
+
+- Контекст (2026-08-20):
+  - supervisor зупиняв launcher `runuser`, а не дочірній Perl worker, тому під час drain worker лишався
+    активним consumer і task міг чекати весь `stop_grace_period`;
+  - операційне відновлення workers не повинно вимагати redeploy web, database або sidecar services.
+
+- Оновлено:
+  - `scripts/container/koha-background-worker-supervisor.sh`;
+  - `scripts/deploy-orchestrator-swarm.sh`.
+
+- Зміни:
+  - supervisor відстежує окремо launcher і фактичний Perl worker; drain призупиняє прийом нових jobs
+    worker-процесом, чекає тільки його job children, а потім коректно завершує launcher;
+  - додано `ORCHESTRATOR_MODE=swarm-workers`: рендерить manifest лише для `koha-worker-default` і
+    `koha-worker-long-tasks`, застосовує лише ці Swarm services та запускає їхній isolation guard.
+
 ### 1) STOMP background jobs: web і workers ізольовано у окремі Swarm services
 
 - Контекст (2026-08-14):

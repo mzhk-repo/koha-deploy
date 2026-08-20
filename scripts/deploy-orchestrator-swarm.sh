@@ -502,6 +502,52 @@ deploy_swarm() {
   log "Swarm deploy completed"
 }
 
+deploy_swarm_workers() {
+  local compose_file swarm_file
+  local worker_services=(koha-worker-default koha-worker-long-tasks)
+
+  compose_file="$(detect_compose_file)"
+  swarm_file="docker-compose.swarm.yml"
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
+
+  [[ -n "${compose_file}" ]] || { log "ERROR: compose file not found (expected docker-compose.yaml|yml)"; exit 1; }
+  [[ -f "${swarm_file}" ]] || { log "ERROR: ${swarm_file} not found"; exit 1; }
+
+  run_validation_scripts "${compose_file}"
+  resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
+  export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
+  prepare_runtime_env_file
+  render_versioned_worker_configs
+
+  log "Rendering workers-only Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
+  docker compose --env-file "${ENV_FILE}" \
+    -f "${compose_file}" \
+    -f "${swarm_file}" \
+    config "${worker_services[@]}" > "${RAW_MANIFEST}"
+
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
+    | sed -E \
+      -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+      -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
+    > "${DEPLOY_MANIFEST}"
+
+  log "Deploying only managed worker services for stack ${STACK_NAME}"
+  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+
+  for service in "${worker_services[@]}"; do
+    wait_for_swarm_container "${service}" "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+  done
+
+  ORCHESTRATOR_MODE=swarm
+  DOCKER_RUNTIME_MODE=swarm
+  export ORCHESTRATOR_MODE DOCKER_RUNTIME_MODE STACK_NAME
+  run_script "background worker isolation guard" "${SCRIPT_DIR}/koha-background-workers-guard.sh" \
+    --env-file "${ENV_FILE}" --wait-timeout "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+
+  log "Workers-only Swarm deploy completed"
+}
+
 cd "${PROJECT_ROOT}"
 
 case "${MODE}" in
@@ -511,8 +557,11 @@ case "${MODE}" in
   swarm)
     deploy_swarm
     ;;
+  swarm-workers)
+    deploy_swarm_workers
+    ;;
   *)
-    log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm"
+    log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm, swarm-workers"
     exit 1
     ;;
 esac
