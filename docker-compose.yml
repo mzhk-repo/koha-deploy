@@ -118,7 +118,7 @@ services:
     configs:
       - source: koha_worker_autostart_guard
         target: /usr/local/sbin/koha-worker
-        mode: "0555"
+        mode: 0555
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:$${KOHA_INTRANET_PORT:-8081} || exit 1"]
       interval: 15s
@@ -179,7 +179,7 @@ services:
     configs:
       - source: koha_background_worker_supervisor
         target: /usr/local/sbin/koha-background-worker-supervisor
-        mode: "0555"
+        mode: 0555
     healthcheck:
       test: ["CMD", "/usr/local/sbin/koha-background-worker-supervisor", "--check"]
       interval: 30s

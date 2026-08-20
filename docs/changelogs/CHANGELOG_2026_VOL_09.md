@@ -52,3 +52,22 @@
   - Hadolint `hadolint/hadolint:v2.15.1` для `memcached/Dockerfile`, `elasticsearch/Dockerfile`, `rabbitmq/Dockerfile` проходить без зауважень (exit code 0);
   - `docker build` успішно збирає локальні образи `test-memcached`, `test-es`, `test-rabbitmq`;
   - `git diff --check`.
+
+### 3) Swarm deploy: виправлено валідацію `configs.*.mode` для `docker stack deploy`
+
+- Контекст (2026-08-20):
+  - `docker stack deploy` відхиляв згенерований Swarm manifest з помилкою `services.koha.configs.0.mode must be a number` через те, що `docker compose config` серіалізував octal mode як рядок (`"0555"`).
+
+- Оновлено:
+  - `docker-compose.yml`;
+  - `scripts/deploy-orchestrator-swarm.sh`.
+
+- Зміни:
+  - у `docker-compose.yml` значення `mode` для configs переведено в числовий octal формат `0555`;
+  - у `scripts/deploy-orchestrator-swarm.sh` додано нормалізацію `mode: "0555"` -> `mode: 0555` у пайплайні підготовки `DEPLOY_MANIFEST` (аналогічно нормалізації `cpus`).
+
+- Перевірено:
+  - `bash -n scripts/deploy-orchestrator-swarm.sh`;
+  - `shellcheck --severity=warning scripts/deploy-orchestrator-swarm.sh`;
+  - валідація створення та прийняття тестового stack manifest із `mode: 0555` через `docker stack deploy`;
+  - `git diff --check`.

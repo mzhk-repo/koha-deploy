@@ -471,7 +471,9 @@ deploy_swarm() {
       -f "${transition_file}" \
       config > "${RAW_MANIFEST}"
     awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
-      | sed -E 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+      | sed -E \
+        -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+        -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
       > "${DEPLOY_MANIFEST}"
     docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
     force_swarm_service_reconcile
@@ -486,7 +488,9 @@ deploy_swarm() {
     config > "${RAW_MANIFEST}"
 
   awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
-    | sed -E 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+    | sed -E \
+      -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+      -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
     > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
