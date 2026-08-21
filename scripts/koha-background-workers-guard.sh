@@ -74,8 +74,17 @@ for pair in 'koha-worker-default default' 'koha-worker-long-tasks long_tasks'; d
   read -r service queue <<<"${pair}"
   elapsed=0
   while :; do
-    count="$(worker_process_count "${service}" "${queue}")"
-    consumers="$(consumer_count "${service}" "${queue}")"
+    if ! count="$(worker_process_count "${service}" "${queue}")" \
+      || ! consumers="$(consumer_count "${service}" "${queue}")"; then
+      if (( elapsed >= WAIT_TIMEOUT )); then
+        printf 'ERROR: %s has no running container after %ss\n' \
+          "${service}" "${WAIT_TIMEOUT}" >&2
+        exit 1
+      fi
+      sleep 3
+      elapsed=$((elapsed + 3))
+      continue
+    fi
     if [[ "${count}" == "1" && "${consumers}" == "1" ]]; then
       printf '%s: one worker process and one consumer on %s\n' "${service}" "${queue}"
       break

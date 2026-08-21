@@ -72,6 +72,8 @@
 4. Worker pre-flight перевіряє live config, instance user, SQL, RabbitMQ TCP і
    `Koha::BackgroundJob->connect`; startup завершується з помилкою, якщо `JobsNotificationMethod` не `STOMP`.
 5. Foreground supervisor контролює exact queue `${memcached_namespace}-<queue>` через RabbitMQ Management API.
+   Перед стартом він закриває stale RabbitMQ connections, що вже споживають його queue; для `stop-first`
+   singleton service це єдиний безпечний спосіб прибрати залишені STOMP subscriptions після ротації task.
    Якщо consumer не дорівнює одному протягом 90 секунд, supervisor швидко завершує тільки worker task. Протягом
    цього grace period healthcheck лишається healthy, щоб Swarm не запустив normal drain до контрольованого abort.
    При штатному stop parent worker призупиняється, активному job надається queue-specific drain timeout

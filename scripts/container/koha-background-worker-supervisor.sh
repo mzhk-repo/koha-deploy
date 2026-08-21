@@ -8,6 +8,7 @@ MONITOR_INTERVAL="${KOHA_WORKER_MONITOR_INTERVAL:-30}"
 CONSUMER_GRACE_SECONDS="${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}"
 DRAIN_TIMEOUT="${KOHA_WORKER_DRAIN_TIMEOUT:-300}"
 MAX_PROCESSES="${MAX_PROCESSES:-1}"
+STALE_CONSUMER_CLEANUP="${KOHA_WORKER_STALE_CONSUMER_CLEANUP:-true}"
 WORKER_PID=""
 PID_FILE=""
 STATUS_FILE=""
@@ -32,6 +33,8 @@ validate_configuration() {
   validate_positive_integer KOHA_WORKER_DRAIN_TIMEOUT "${DRAIN_TIMEOUT}"
   validate_positive_integer MAX_PROCESSES "${MAX_PROCESSES}"
   [[ "${CONSUMER_GRACE_SECONDS}" -ge "${MONITOR_INTERVAL}" ]] || die "KOHA_WORKER_CONSUMER_GRACE_SECONDS must be >= KOHA_WORKER_MONITOR_INTERVAL"
+  [[ "${STALE_CONSUMER_CLEANUP}" == "true" || "${STALE_CONSUMER_CLEANUP}" == "false" ]] \
+    || die "KOHA_WORKER_STALE_CONSUMER_CLEANUP must be true or false"
 }
 
 prepare_paths() {
@@ -71,6 +74,48 @@ rabbitmq_queue_consumers() {
       my ($consumers) = $response->{content} =~ /"consumers"\s*:\s*(\d+)/;
       print defined($consumers) ? $consumers : 0;
     '
+}
+
+rabbitmq_close_stale_queue_consumers() {
+  runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
+    perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MJSON::PP=decode_json -MC4::Context -e '
+      sub xml_value {
+        my ($doc, $name) = @_;
+        my ($node) = $doc->findnodes("//message_broker/$name");
+        return $node ? $node->textContent : "";
+      }
+      sub url_escape {
+        my ($value) = @_;
+        $value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($1))/eg;
+        return $value;
+      }
+      my $doc = XML::LibXML->load_xml(location => $ENV{KOHA_CONF});
+      my $host = xml_value($doc, "hostname") || $ENV{MB_HOST} || "rabbitmq";
+      my $user = xml_value($doc, "username") || $ENV{MB_USER} || "";
+      my $pass = xml_value($doc, "password") || "";
+      my $vhost = xml_value($doc, "vhost") || "/";
+      my $namespace = C4::Context->config("memcached_namespace") || "koha_" . ($ENV{KOHA_INSTANCE} || "library");
+      my $queue = $namespace . "-" . $ENV{KOHA_WORKER_QUEUE};
+      my $auth = encode_base64("$user:$pass", "");
+      my $http = HTTP::Tiny->new(timeout => 5);
+      my $response = $http->get("http://$host:15672/api/consumers/" . url_escape($vhost), { headers => { Authorization => "Basic $auth" } });
+      die "RabbitMQ Management API consumer list request failed\n" unless $response->{success};
+      my %connections;
+      for my $consumer (@{ decode_json($response->{content}) }) {
+        next unless ($consumer->{queue}{name} // "") eq $queue;
+        my $connection = $consumer->{channel_details}{connection_name} // "";
+        $connections{$connection} = 1 if length $connection;
+      }
+      for my $connection (sort keys %connections) {
+        warn "closing stale RabbitMQ consumer connection for $queue\n";
+        my $closed = $http->request("DELETE", "http://$host:15672/api/connections/" . url_escape($connection), { headers => { Authorization => "Basic $auth" } });
+        die "RabbitMQ Management API stale connection delete failed\n" unless $closed->{success} || $closed->{status} == 404;
+      }
+    '
+}
+
+rabbitmq_queue_has_no_consumers() {
+  [[ "$(rabbitmq_queue_consumers)" == "0" ]]
 }
 
 tcp_probe() {
@@ -180,6 +225,10 @@ wait_until 'Koha database' koha-mysql "${KOHA_INSTANCE}" -N -B -e 'SELECT 1'
 wait_until 'RabbitMQ STOMP TCP' tcp_probe "${MB_HOST}:${MB_PORT:-61613}" 61613
 wait_until 'RabbitMQ STOMP Koha connect' runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
   perl -I/usr/share/koha/lib -MKoha::BackgroundJob -e 'my $conn=Koha::BackgroundJob->connect; exit 1 unless $conn; $conn->disconnect;'
+if [[ "${STALE_CONSUMER_CLEANUP}" == "true" ]]; then
+  rabbitmq_close_stale_queue_consumers
+  wait_until "stale RabbitMQ ${QUEUE} consumer cleanup" rabbitmq_queue_has_no_consumers
+fi
 
 export MAX_PROCESSES
 setpriv --reuid "${KOHA_INSTANCE_UID}" --regid "${KOHA_INSTANCE_GID}" --init-groups \

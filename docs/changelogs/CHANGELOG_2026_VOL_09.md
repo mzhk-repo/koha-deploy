@@ -1,5 +1,29 @@
 # CHANGELOG 2026 VOL 09
 
+### 8) STOMP workers: очищення stale RabbitMQ subscriptions перед стартом singleton task
+
+- Контекст (2026-08-21):
+  - після завершення worker task RabbitMQ міг зберігати його STOMP consumer без відповідного running Koha
+    container; кожен replacement додавав новий consumer, тому обидві queues досягали `consumers=2`;
+  - RabbitMQ channel/connection mapping підтвердив stale connections для `default` і `long_tasks`.
+
+- Зміни:
+  - supervisor через RabbitMQ Management API знаходить і закриває connections, що до старту вже споживають його
+    exact queue, та чекає `consumers=0` перед запуском Perl worker;
+  - додано керований параметр `KOHA_WORKER_STALE_CONSUMER_CLEANUP` (default `true`).
+
+### 7) Worker isolation guard: Swarm task rotation не переходить у Compose fallback
+
+- Контекст (2026-08-21):
+  - під час `stop-first` worker update guard міг побачити старий task у попередній перевірці, а під час наступної
+    перевірки контейнер уже був відсутній;
+  - runtime adapter тоді помилково переходив до Compose exec, хоча runtime був Swarm.
+
+- Зміни:
+  - `docker_runtime_exec` у Swarm mode повертає помилку, а не переходить до Compose exec;
+  - worker isolation guard повторює worker/consumer checks до `--wait-timeout`, якщо task ще не має running
+    container, а потім повертає точну помилку.
+
 ### 6) STOMP workers: healthcheck більше не перериває supervisor до consumer grace period
 
 - Контекст (2026-08-21):
