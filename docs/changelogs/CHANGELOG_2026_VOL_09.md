@@ -1,5 +1,17 @@
 # CHANGELOG 2026 VOL 09
 
+### 9) Elasticsearch indexer: singleton ownership і cleanup stale `elastic_index` consumers
+
+- Контекст (2026-08-21):
+  - діагностика показала один running `koha-es-indexer` task і відсутній legacy daemon у web, але два RabbitMQ
+    consumers на `koha_library-elastic_index`;
+  - inline supervisor вважав здоровим будь-який стан `consumers > 0`, тому stale connection не виявлявся.
+
+- Зміни:
+  - перед стартом daemon supervisor очищує stale connections, що споживають `elastic_index`, і чекає порожню queue;
+  - monitor вимагає рівно одного consumer;
+  - додано параметр `KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP` (default `true`).
+
 ### 8) STOMP workers: очищення stale RabbitMQ subscriptions перед стартом singleton task
 
 - Контекст (2026-08-21):

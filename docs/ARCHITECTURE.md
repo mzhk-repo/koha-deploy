@@ -55,7 +55,8 @@
    - SQL availability через `koha-mysql`;
    - Elasticsearch TCP availability;
    - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
-4. Після readiness-перевірок supervisor запускає `es_indexer_daemon.pl` і контролює RabbitMQ consumer.
+4. Після readiness-перевірок supervisor закриває stale RabbitMQ connections, що вже споживають
+   `elastic_index`, запускає `es_indexer_daemon.pl` і контролює рівно один RabbitMQ consumer.
 5. Модель recovery — crash-only: якщо Perl daemon завершується або consumer відсутній довше grace period,
    завершується контейнер, а restart виконує Compose/Swarm policy.
 6. Перевірки через `ss` не використовуються, щоб не створювати orphan child processes.

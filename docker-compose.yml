@@ -301,8 +301,51 @@ services:
             '
         }
 
+        rabbitmq_close_stale_elastic_consumers() {
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MJSON::PP=decode_json -MC4::Context -e '
+              sub xml_value {
+                my ($$doc, $$name) = @_;
+                my ($$node) = $$doc->findnodes("//message_broker/$$name");
+                return $$node ? $$node->textContent : "";
+              }
+              sub url_escape {
+                my ($$value) = @_;
+                $$value =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($$1))/eg;
+                return $$value;
+              }
+              my $$doc = XML::LibXML->load_xml(location => $$ENV{KOHA_CONF});
+              my $$host = xml_value($$doc, "hostname") || $$ENV{MB_HOST} || "rabbitmq";
+              my $$user = xml_value($$doc, "username") || $$ENV{MB_USER} || "";
+              my $$pass = xml_value($$doc, "password") || "";
+              my $$vhost = xml_value($$doc, "vhost") || "/";
+              my $$namespace = C4::Context->config("memcached_namespace") || "koha_" . ($$ENV{KOHA_INSTANCE} || "library");
+              my $$queue = $$namespace . "-elastic_index";
+              my $$auth = encode_base64("$$user:$$pass", "");
+              my $$http = HTTP::Tiny->new(timeout => 5);
+              my $$response = $$http->get("http://$$host:15672/api/consumers/" . url_escape($$vhost), { headers => { Authorization => "Basic $$auth" } });
+              die "RabbitMQ Management API consumer list request failed\n" unless $$response->{success};
+              my %connections;
+              for my $$consumer (@{ decode_json($$response->{content}) }) {
+                next unless ($$consumer->{queue}{name} // "") eq $$queue;
+                my $$connection = $$consumer->{channel_details}{connection_name} // "";
+                $$connections{$$connection} = 1 if length $$connection;
+              }
+              for my $$connection (sort keys %connections) {
+                warn "closing stale RabbitMQ consumer connection for $$queue\n";
+                my $$closed = $$http->request("DELETE", "http://$$host:15672/api/connections/" . url_escape($$connection), { headers => { Authorization => "Basic $$auth" } });
+                die "RabbitMQ Management API stale connection delete failed\n" unless $$closed->{success} || $$closed->{status} == 404;
+              }
+            '
+        }
+
+        rabbitmq_elastic_queue_has_no_consumers() {
+          [ "$$(rabbitmq_elastic_consumers)" = "0" ]
+        }
+
         monitor_interval="$${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}"
         consumer_grace="$${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}"
+        stale_consumer_cleanup="$${KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP:-true}"
         if ! [[ "$$monitor_interval" =~ ^[0-9]+$$ ]] || [ "$$monitor_interval" -lt 1 ]; then
           echo "ERROR: KOHA_ES_INDEXER_MONITOR_INTERVAL must be a positive integer" >&2
           exit 1
@@ -310,6 +353,15 @@ services:
         if ! [[ "$$consumer_grace" =~ ^[0-9]+$$ ]] || [ "$$consumer_grace" -lt "$$monitor_interval" ]; then
           echo "ERROR: KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS must be >= KOHA_ES_INDEXER_MONITOR_INTERVAL" >&2
           exit 1
+        fi
+        if [ "$$stale_consumer_cleanup" != "true" ] && [ "$$stale_consumer_cleanup" != "false" ]; then
+          echo "ERROR: KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP must be true or false" >&2
+          exit 1
+        fi
+
+        if [ "$$(jobs_notification_method)" = "STOMP" ] && [ "$$stale_consumer_cleanup" = "true" ]; then
+          rabbitmq_close_stale_elastic_consumers
+          wait_until "stale RabbitMQ elastic_index consumer cleanup" rabbitmq_elastic_queue_has_no_consumers
         fi
 
         runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
@@ -333,14 +385,14 @@ services:
         consumer_missing_since=""
         while kill -0 "$$indexer_pid" 2>/dev/null; do
           consumers="$$(rabbitmq_elastic_consumers || printf '0')"
-          if [ "$$consumers" -gt 0 ]; then
+          if [ "$$consumers" -eq 1 ]; then
             consumer_missing_since=""
           else
             if [ -z "$$consumer_missing_since" ]; then
               consumer_missing_since="$$SECONDS"
-              echo "WARNING: koha-es-indexer RabbitMQ consumer missing (consumers=$$consumers)"
+              echo "WARNING: koha-es-indexer RabbitMQ consumer ownership mismatch (consumers=$$consumers)"
             elif [ "$$((SECONDS - consumer_missing_since))" -ge "$$consumer_grace" ]; then
-              echo "ERROR: koha-es-indexer RabbitMQ consumer missing for >=$${consumer_grace}s; exiting for Swarm restart" >&2
+              echo "ERROR: koha-es-indexer RabbitMQ consumer ownership mismatch for >=$${consumer_grace}s; exiting for Swarm restart" >&2
               stop_indexer
               exit 1
             fi
@@ -397,6 +449,7 @@ services:
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
       KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}
       KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP: ${KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP:-true}
     depends_on:
       db:
         condition: service_healthy
