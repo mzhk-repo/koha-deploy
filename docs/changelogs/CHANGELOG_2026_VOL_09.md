@@ -1,5 +1,26 @@
 # CHANGELOG 2026 VOL 09
 
+### 6) STOMP workers: healthcheck більше не перериває supervisor до consumer grace period
+
+- Контекст (2026-08-21):
+  - RabbitMQ показував `consumers=2` для обох worker queues;
+  - supervisor одразу записував `unhealthy`, тому Docker healthcheck завершував task через SIGTERM (`143`) раніше,
+    ніж спливав `KOHA_WORKER_CONSUMER_GRACE_SECONDS`;
+  - TERM запускав штатний довгий drain, унаслідок чого старий consumer перекривався з replacement task і
+    restart loop самопідсилювався.
+
+- Оновлено:
+  - `scripts/container/koha-background-worker-supervisor.sh`;
+  - `docs/ARCHITECTURE.md`.
+
+- Зміни:
+  - під час consumer grace period supervisor залишає health status `healthy`;
+  - після завершення grace period supervisor сам виконує швидкий abort worker і завершує task, дозволяючи Swarm
+    створити replacement без normal drain та дубльованого consumer.
+
+- Перевірено:
+  - локальні shell syntax/lint і rendered Compose manifest.
+
 ### 4) STOMP workers: усунено restart loop через відсутній `s6-setuidgid`
 
 - Контекст (2026-08-20):

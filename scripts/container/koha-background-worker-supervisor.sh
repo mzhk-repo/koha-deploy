@@ -195,7 +195,6 @@ while worker_is_running; do
     missing_since=""
     printf '%s\n' healthy > "${STATUS_FILE}"
   else
-    printf '%s\n' unhealthy > "${STATUS_FILE}"
     if [[ -z "${missing_since}" ]]; then
       missing_since="${SECONDS}"
       log "RabbitMQ consumer missing for ${QUEUE} (consumers=${consumers})"
@@ -204,6 +203,13 @@ while worker_is_running; do
       abort_worker
       exit 1
     fi
+
+    # The supervisor, rather than Docker healthcheck, owns consumer recovery.
+    # Reporting unhealthy here makes Swarm send TERM before the grace period
+    # elapses; TERM then enters the long normal-drain path and leaves a stale
+    # consumer alongside the replacement task. Keep the task healthy until
+    # the supervisor aborts it after the configured grace period.
+    printf '%s\n' healthy > "${STATUS_FILE}"
   fi
   sleep "${MONITOR_INTERVAL}"
 done

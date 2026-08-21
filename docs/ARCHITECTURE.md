@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-08-14
+Дата оновлення: 2026-08-21
 
 ## 1) Призначення репозиторію
 
@@ -72,8 +72,10 @@
 4. Worker pre-flight перевіряє live config, instance user, SQL, RabbitMQ TCP і
    `Koha::BackgroundJob->connect`; startup завершується з помилкою, якщо `JobsNotificationMethod` не `STOMP`.
 5. Foreground supervisor контролює exact queue `${memcached_namespace}-<queue>` через RabbitMQ Management API.
-   Якщо consumer не дорівнює одному протягом 90 секунд, завершується тільки worker task. При stop parent worker
-   призупиняється, активному job надається queue-specific drain timeout (default 300 s, long_tasks 1800 s).
+   Якщо consumer не дорівнює одному протягом 90 секунд, supervisor швидко завершує тільки worker task. Протягом
+   цього grace period healthcheck лишається healthy, щоб Swarm не запустив normal drain до контрольованого abort.
+   При штатному stop parent worker призупиняється, активному job надається queue-specific drain timeout
+   (default 300 s, long_tasks 1800 s).
 6. Web updates застосовуються `start-first` з rollback, workers — `stop-first`, щоб не створювати два consumers
    однієї черги. Перший migration deploy виконується у дві фази: web без embedded workers, потім workers.
 7. RabbitMQ TCP keepalive і persistence не входять у цей change: поточний Koha `Net::Stomp` не вмикає
