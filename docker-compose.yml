@@ -295,7 +295,12 @@ services:
               my $$auth = encode_base64("$$user:$$pass", "");
               my $$url = "http://$$host:15672/api/queues/" . url_escape($$vhost) . "/" . url_escape($$queue);
               my $$response = HTTP::Tiny->new(timeout => 5)->get($$url, { headers => { Authorization => "Basic $$auth" } });
-              exit 2 unless $$response->{success};
+              if ($$response->{status} == 404) {
+                print 0;
+                exit 0;
+              }
+              die "RabbitMQ Management API queue request failed ($$response->{status} $$response->{reason})\n"
+                unless $$response->{success};
               my ($$consumers) = $$response->{content} =~ /"consumers"\s*:\s*(\d+)/;
               print defined($$consumers) ? $$consumers : 0;
             '

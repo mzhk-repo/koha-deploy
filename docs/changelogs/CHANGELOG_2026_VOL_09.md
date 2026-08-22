@@ -1,5 +1,17 @@
 # CHANGELOG 2026 VOL 09
 
+### 10) STOMP cold start: відсутня RabbitMQ queue більше не блокує worker/indexer
+
+- Контекст (2026-08-22):
+  - після restart host `koha-worker-default` входив у restart loop, хоча consumer для
+    `koha_library-default` був відсутній;
+  - RabbitMQ Management API коректно повертає `404 Not Found` для queue, яку ще не створив жоден worker,
+    але startup probe трактував цю відповідь як неуспішне очищення stale consumer.
+
+- Зміни:
+  - consumer probes для managed workers та `koha-es-indexer` трактують HTTP `404` як `0 consumers`;
+  - інші відповіді Management API лишаються фатальними й тепер містять HTTP status/reason у помилці.
+
 ### 9) Elasticsearch indexer: singleton ownership і cleanup stale `elastic_index` consumers
 
 - Контекст (2026-08-21):
