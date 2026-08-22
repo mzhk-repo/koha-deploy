@@ -12,6 +12,12 @@
     `healthy` (або `running` для сервісів без healthcheck);
   - після першого успішного readiness check deploy одразу продовжується та фіксує elapsed time;
   - `ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT` лишається лише верхньою межею для несправного сервісу.
+  - bootstrap порівнює content checksum керованих live config/CSP файлів і не робить force-restart `koha` та
+    workers, якщо вони не змінилися; system preference modules застосовуються через один cache flush.
+
+- Перевірено:
+  - додано `tests/deploy-orchestrator-readiness.test.sh`: healthy current task завершує readiness без retry sleep.
+  - додано `tests/bootstrap-live-configs-noop-restart.test.sh`: незмінний live config не викликає Docker restart.
 
 ### 10) STOMP cold start: відсутня RabbitMQ queue більше не блокує worker/indexer
 

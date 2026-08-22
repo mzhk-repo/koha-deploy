@@ -563,20 +563,26 @@ deploy_swarm_workers() {
   log "Workers-only Swarm deploy completed"
 }
 
-cd "${PROJECT_ROOT}"
+main() {
+  cd "${PROJECT_ROOT}"
 
-case "${MODE}" in
-  noop)
-    log "No-op mode. Set ORCHESTRATOR_MODE=swarm to enable Phase 8 Swarm deploy path."
-    ;;
-  swarm)
-    deploy_swarm
-    ;;
-  swarm-workers)
-    deploy_swarm_workers
-    ;;
-  *)
-    log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm, swarm-workers"
-    exit 1
-    ;;
-esac
+  case "${MODE}" in
+    noop)
+      log "No-op mode. Set ORCHESTRATOR_MODE=swarm to enable Phase 8 Swarm deploy path."
+      ;;
+    swarm)
+      deploy_swarm
+      ;;
+    swarm-workers)
+      deploy_swarm_workers
+      ;;
+    *)
+      log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm, swarm-workers"
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

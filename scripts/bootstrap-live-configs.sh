@@ -154,6 +154,21 @@ COMPOSE_FILE="$(detect_compose_file)"
 DOCKER_RUNTIME_COMPOSE_FILE="${COMPOSE_FILE}"
 DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
 export DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+load_orchestrator_env_file "${ENV_FILE}"
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-library}"
+KOHA_CONF_FILE="${VOL_KOHA_CONF:-}/${KOHA_INSTANCE}/koha-conf.xml"
+CSP_CONFIG_FILE="${PROJECT_ROOT}/apache/csp-report-only.conf"
+
+file_checksum() {
+  local path="$1"
+
+  if [[ -f "${path}" ]]; then
+    sha256sum "${path}" | awk '{print $1}'
+  else
+    printf '%s\n' absent
+  fi
+}
 
 if ${USE_ALL} || [ "${#selected_modules[@]}" -eq 0 ]; then
   selected_modules=("${MODULE_ORDER[@]}")
@@ -164,6 +179,7 @@ log "Selected modules: ${selected_modules[*]}"
 index=0
 needs_restart=false
 workers_need_restart=false
+sysprefs_applied=false
 has_patch_module=false
 for mod in "${selected_modules[@]}"; do
   if [ "${mod}" != "verify" ]; then
@@ -173,6 +189,25 @@ for mod in "${selected_modules[@]}"; do
 done
 
 for mod in "${selected_modules[@]}"; do
+  restart_probe_file=""
+  case "${mod}" in
+    db|timezone|trusted-proxies|memcached|message-broker|smtp)
+      restart_probe_file="${KOHA_CONF_FILE}"
+      ;;
+    csp-report-only)
+      restart_probe_file="${CSP_CONFIG_FILE}"
+      ;;
+    search-prefs|api-prefs|domain-prefs|identity-provider|oidc-prefs|opac-matomo)
+      sysprefs_applied=true
+      ;;
+  esac
+
+  if [[ -n "${restart_probe_file}" ]]; then
+    before_checksum="$(file_checksum "${restart_probe_file}")"
+  else
+    before_checksum=""
+  fi
+
   if ${DRY_RUN} && ${has_patch_module} && [ "${mod}" = "verify" ]; then
     log "Skipping verify in dry-run because patch modules do not modify files"
     continue
@@ -192,14 +227,17 @@ for mod in "${selected_modules[@]}"; do
   log "Running module: ${mod}"
   "${cmd[@]}"
 
-  if [ "${mod}" != "verify" ]; then
-    needs_restart=true
+  if [[ -n "${restart_probe_file}" ]]; then
+    after_checksum="$(file_checksum "${restart_probe_file}")"
+    if [[ "${before_checksum}" != "${after_checksum}" ]]; then
+      needs_restart=true
+      case "${mod}" in
+        db|timezone|memcached|message-broker)
+          workers_need_restart=true
+          ;;
+      esac
+    fi
   fi
-  case "${mod}" in
-    db|timezone|memcached|message-broker)
-      workers_need_restart=true
-      ;;
-  esac
 
   index=$((index + 1))
 done
@@ -214,8 +252,14 @@ if ${NO_RESTART}; then
   exit 0
 fi
 
+if ${sysprefs_applied}; then
+  log "Flushing Koha cache after system preference modules"
+  docker_runtime_exec koha koha-shell "${KOHA_INSTANCE}" -c \
+    'perl -MKoha::Caches -e "Koha::Caches->get_instance->flush_all; print qq(cache flush ok\\n)"'
+fi
+
 if ${needs_restart}; then
-  log "Restarting koha to apply patched live config"
+  log "Restarting koha to apply changed live configuration"
   docker_runtime_restart_service koha >/dev/null
   if ${workers_need_restart}; then
     for worker_service in koha-worker-default koha-worker-long-tasks; do
@@ -228,7 +272,7 @@ if ${needs_restart}; then
       docker_runtime_restart_service "${worker_service}" >/dev/null
     done
   fi
-  log "Restart complete"
+  log "Live configuration restart complete"
 else
-  log "No patch module requiring restart was run"
+  log "Live configuration unchanged; skip Swarm service restart"
 fi
