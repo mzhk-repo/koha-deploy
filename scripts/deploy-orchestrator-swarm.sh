@@ -183,23 +183,34 @@ prepare_runtime_env_file() {
 wait_for_swarm_container() {
   local service="$1"
   local timeout="${2:-300}"
-  local elapsed=0
   local service_name="${STACK_NAME}_${service}"
+  local deadline=$((SECONDS + timeout))
+  local task_id cid status
 
-  log "Waiting for Swarm container: ${service_name} (timeout=${timeout}s)"
-  while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    if docker ps -q \
-      --filter "label=com.docker.swarm.service.name=${service_name}" \
-      --filter "status=running" \
-      | head -n 1 \
-      | grep -q .; then
+  log "Waiting for ready Swarm task: ${service_name} (timeout=${timeout}s)"
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    task_id="$(docker service ps "${service_name}" --no-trunc --filter desired-state=running --format '{{.ID}}' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${task_id}" ]]; then
+      cid="$(docker ps -q \
+        --filter "label=com.docker.swarm.service.name=${service_name}" \
+        --filter "label=com.docker.swarm.task.id=${task_id}" \
+        --filter "status=running" \
+        | head -n 1)"
+    else
+      cid=""
+    fi
+
+    if [[ -n "${cid}" ]]; then
+      status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
+      if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
+        log "Swarm task ready: ${service_name} (status=${status}, elapsed=$((SECONDS + timeout - deadline))s)"
       return 0
+      fi
     fi
     sleep 3
-    elapsed=$((elapsed + 3))
   done
 
-  log "ERROR: timeout waiting for Swarm container: ${service_name}"
+  log "ERROR: timeout waiting for ready Swarm task: ${service_name}"
   print_swarm_service_diagnostics "${service_name}"
   exit 1
 }

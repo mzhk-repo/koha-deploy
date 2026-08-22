@@ -1,5 +1,18 @@
 # CHANGELOG 2026 VOL 09
 
+### 11) Swarm deploy: readiness waits follow the current healthy task
+
+- Контекст (2026-08-22):
+  - post-deploy readiness перевіряв будь-який running container сервісу, зокрема task попередньої revision
+    під час `start-first` update, а лог не показував фактичний час до готовності;
+  - це не давало deployment-оркестратору точного критерію переходу до наступного кроку.
+
+- Зміни:
+  - `wait_for_swarm_container` визначає task з desired state `running`, звіряє його container і чекає
+    `healthy` (або `running` для сервісів без healthcheck);
+  - після першого успішного readiness check deploy одразу продовжується та фіксує elapsed time;
+  - `ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT` лишається лише верхньою межею для несправного сервісу.
+
 ### 10) STOMP cold start: відсутня RabbitMQ queue більше не блокує worker/indexer
 
 - Контекст (2026-08-22):
