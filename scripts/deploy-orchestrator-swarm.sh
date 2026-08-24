@@ -81,6 +81,12 @@ render_versioned_env_secret() {
     --write-env-file "${ENV_FILE}" >/dev/null
 }
 
+render_versioned_worker_configs() {
+  run_script "versioned worker runtime configs" "${SCRIPT_DIR}/render-versioned-worker-configs.sh" \
+    --env-file "${ENV_FILE}" \
+    --write-env-file "${ENV_FILE}" >/dev/null
+}
+
 is_true() {
   case "${1:-}" in
     1|true|TRUE|True|yes|YES|on|ON) return 0 ;;
@@ -177,25 +183,62 @@ prepare_runtime_env_file() {
 wait_for_swarm_container() {
   local service="$1"
   local timeout="${2:-300}"
-  local elapsed=0
   local service_name="${STACK_NAME}_${service}"
+  local deadline=$((SECONDS + timeout))
+  local task_id cid status
 
-  log "Waiting for Swarm container: ${service_name} (timeout=${timeout}s)"
-  while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    if docker ps -q \
-      --filter "label=com.docker.swarm.service.name=${service_name}" \
-      --filter "status=running" \
-      | head -n 1 \
-      | grep -q .; then
+  log "Waiting for ready Swarm task: ${service_name} (timeout=${timeout}s)"
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    task_id="$(docker service ps "${service_name}" --no-trunc --filter desired-state=running --format '{{.ID}}' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${task_id}" ]]; then
+      cid="$(docker ps -q \
+        --filter "label=com.docker.swarm.service.name=${service_name}" \
+        --filter "label=com.docker.swarm.task.id=${task_id}" \
+        --filter "status=running" \
+        | head -n 1)"
+    else
+      cid=""
+    fi
+
+    if [[ -n "${cid}" ]]; then
+      status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
+      if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
+        log "Swarm task ready: ${service_name} (status=${status}, elapsed=$((SECONDS + timeout - deadline))s)"
+      return 0
+      fi
+    fi
+    sleep 3
+  done
+
+  log "ERROR: timeout waiting for ready Swarm task: ${service_name}"
+  print_swarm_service_diagnostics "${service_name}"
+  exit 1
+}
+
+swarm_web_has_embedded_workers() {
+  local cid
+  cid="$(docker ps -q \
+    --filter "label=com.docker.swarm.service.name=${STACK_NAME}_koha" \
+    --filter status=running | head -n 1)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec "${cid}" sh -ec 'pgrep -f "[b]ackground_jobs_worker\\.pl" >/dev/null'
+}
+
+wait_for_web_without_embedded_workers() {
+  local timeout="$1"
+  local elapsed=0
+
+  while (( elapsed < timeout )); do
+    if ! swarm_web_has_embedded_workers; then
+      log "Koha web task has no embedded STOMP workers"
       return 0
     fi
     sleep 3
     elapsed=$((elapsed + 3))
   done
 
-  log "ERROR: timeout waiting for Swarm container: ${service_name}"
-  print_swarm_service_diagnostics "${service_name}"
-  exit 1
+  log "ERROR: Koha web task still owns embedded STOMP workers after ${timeout}s"
+  return 1
 }
 
 print_swarm_service_diagnostics() {
@@ -331,6 +374,10 @@ run_post_deploy_scripts() {
   run_script "live config bootstrap" "${SCRIPT_DIR}/bootstrap-live-configs.sh" --env-file "${ENV_FILE}"
 
   wait_for_swarm_container koha "${wait_timeout}"
+  wait_for_swarm_container koha-worker-default "${wait_timeout}"
+  wait_for_swarm_container koha-worker-long-tasks "${wait_timeout}"
+
+  run_script "background worker isolation guard" "${SCRIPT_DIR}/koha-background-workers-guard.sh" --env-file "${ENV_FILE}" --wait-timeout "${wait_timeout}"
 
   run_script "Elasticsearch index guard" "${SCRIPT_DIR}/koha-elasticsearch-index-guard.sh" --env-file "${ENV_FILE}" --wait-timeout "${wait_timeout}"
 
@@ -392,10 +439,11 @@ run_ansible_secrets_if_configured() {
 }
 
 deploy_swarm() {
-  local compose_file swarm_file
+  local compose_file swarm_file transition_file
 
   compose_file="$(detect_compose_file)"
   swarm_file="docker-compose.swarm.yml"
+  transition_file="docker-compose.workers-transition.yml"
   RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
   DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
 
@@ -407,6 +455,10 @@ deploy_swarm() {
     log "ERROR: ${swarm_file} not found"
     exit 1
   fi
+  if [[ ! -f "${transition_file}" ]]; then
+    log "ERROR: ${transition_file} not found"
+    exit 1
+  fi
 
 
   run_validation_scripts "${compose_file}"
@@ -415,11 +467,30 @@ deploy_swarm() {
 
   prepare_runtime_env_file
   validate_db_volume_preflight
+  render_versioned_worker_configs
   render_versioned_env_secret
   run_ansible_secrets_if_configured
 
   run_pre_deploy_adjacent_scripts
   build_swarm_local_images "${compose_file}"
+
+  if swarm_web_has_embedded_workers; then
+    log "Legacy embedded STOMP workers detected; applying transition manifest before starting dedicated workers"
+    docker compose --env-file "${ENV_FILE}" \
+      -f "${compose_file}" \
+      -f "${swarm_file}" \
+      -f "${transition_file}" \
+      config > "${RAW_MANIFEST}"
+    awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
+      | sed -E \
+        -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+        -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
+      > "${DEPLOY_MANIFEST}"
+    docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+    force_swarm_service_reconcile
+    wait_for_swarm_container koha "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+    wait_for_web_without_embedded_workers "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+  fi
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
@@ -428,7 +499,9 @@ deploy_swarm() {
     config > "${RAW_MANIFEST}"
 
   awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
-    | sed -E 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+    | sed -E \
+      -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+      -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
     > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
@@ -440,17 +513,76 @@ deploy_swarm() {
   log "Swarm deploy completed"
 }
 
-cd "${PROJECT_ROOT}"
+deploy_swarm_workers() {
+  local compose_file swarm_file
+  local worker_services=(koha-worker-default koha-worker-long-tasks)
 
-case "${MODE}" in
-  noop)
-    log "No-op mode. Set ORCHESTRATOR_MODE=swarm to enable Phase 8 Swarm deploy path."
-    ;;
-  swarm)
-    deploy_swarm
-    ;;
-  *)
-    log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm"
-    exit 1
-    ;;
-esac
+  compose_file="$(detect_compose_file)"
+  swarm_file="docker-compose.swarm.yml"
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
+
+  [[ -n "${compose_file}" ]] || { log "ERROR: compose file not found (expected docker-compose.yaml|yml)"; exit 1; }
+  [[ -f "${swarm_file}" ]] || { log "ERROR: ${swarm_file} not found"; exit 1; }
+
+  run_validation_scripts "${compose_file}"
+  resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
+  export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
+  prepare_runtime_env_file
+  render_versioned_worker_configs
+
+  log "Rendering workers-only Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
+  KOHA_APP_ENV_PAYLOAD_SECRET_NAME="${KOHA_APP_ENV_PAYLOAD_SECRET_NAME:-workers-only-unused}" \
+  KOHA_DB_PASSWORD_SECRET_NAME="${KOHA_DB_PASSWORD_SECRET_NAME:-workers-only-unused}" \
+  KOHA_DB_ROOT_PASSWORD_SECRET_NAME="${KOHA_DB_ROOT_PASSWORD_SECRET_NAME:-workers-only-unused}" \
+  RABBITMQ_PASSWORD_SECRET_NAME="${RABBITMQ_PASSWORD_SECRET_NAME:-workers-only-unused}" \
+  docker compose --env-file "${ENV_FILE}" \
+    -f "${compose_file}" \
+    -f "${swarm_file}" \
+    config "${worker_services[@]}" > "${RAW_MANIFEST}"
+
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
+    | sed -E \
+      -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
+      -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
+    > "${DEPLOY_MANIFEST}"
+
+  log "Deploying only managed worker services for stack ${STACK_NAME}"
+  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+
+  for service in "${worker_services[@]}"; do
+    wait_for_swarm_container "${service}" "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+  done
+
+  ORCHESTRATOR_MODE=swarm
+  DOCKER_RUNTIME_MODE=swarm
+  export ORCHESTRATOR_MODE DOCKER_RUNTIME_MODE STACK_NAME
+  run_script "background worker isolation guard" "${SCRIPT_DIR}/koha-background-workers-guard.sh" \
+    --env-file "${ENV_FILE}" --wait-timeout "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
+
+  log "Workers-only Swarm deploy completed"
+}
+
+main() {
+  cd "${PROJECT_ROOT}"
+
+  case "${MODE}" in
+    noop)
+      log "No-op mode. Set ORCHESTRATOR_MODE=swarm to enable Phase 8 Swarm deploy path."
+      ;;
+    swarm)
+      deploy_swarm
+      ;;
+    swarm-workers)
+      deploy_swarm_workers
+      ;;
+    *)
+      log "ERROR: unknown ORCHESTRATOR_MODE=${MODE}. Supported: noop, swarm, swarm-workers"
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

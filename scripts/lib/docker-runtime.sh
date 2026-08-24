@@ -223,8 +223,8 @@ docker_runtime_exec() {
         return $?
       fi
 
-      docker_runtime_log "WARNING: running Swarm container for service '${STACK_NAME:-koha}_${service}' not found. Fallback на docker compose exec."
-      docker_runtime_compose_exec "${service}" "$@"
+      docker_runtime_log "ERROR: running Swarm container for service '${STACK_NAME:-koha}_${service}' not found"
+      return 1
       ;;
   esac
 }

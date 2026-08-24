@@ -55,10 +55,11 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 #### Бізнес-логіка
 - Основний Swarm orchestrator для CI/CD.
-- Порядок фаз: validation -> env resolution -> versioned runtime env secret -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/index guard/lockdown.
-- Перед render stack manifest створює Docker secrets з hash-based назвами (`KOHA_APP_ENV_PAYLOAD_SECRET_NAME`, `KOHA_DB_PASSWORD_SECRET_NAME`, `KOHA_DB_ROOT_PASSWORD_SECRET_NAME`, `RABBITMQ_PASSWORD_SECRET_NAME`), щоб зміни в `env.<env>.enc` давали новий service spec і rolling update.
-- Post-deploy чекає running containers `${STACK_NAME}_db` і `${STACK_NAME}_koha`.
-- `bootstrap-live-configs.sh`, `koha-elasticsearch-index-guard.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
+- Порядок фаз: validation -> env resolution -> versioned runtime secret/configs -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/worker guard/index guard/lockdown.
+- Перед render stack manifest створює Docker secrets і immutable Docker configs з hash-based назвами. Зміна worker guard/supervisor змінює service spec і запускає контрольований update.
+- Якщо існуючий web task має embedded `background_jobs_worker.pl`, спершу deploy-иться `docker-compose.workers-transition.yml` з worker replicas `0`; після підтвердження web без embedded workers deploy-иться фінальний manifest з двома singleton workers.
+- Post-deploy чекає `${STACK_NAME}_db`, `${STACK_NAME}_koha` і обидва worker containers.
+- `bootstrap-live-configs.sh`, `koha-background-workers-guard.sh`, `koha-elasticsearch-index-guard.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
 
 #### Manual execution
 ```bash
@@ -295,6 +296,7 @@ SERVER_ENV=prod bash scripts/test-restore.sh --source /var/backups/koha/2026-04-
 - Disaster recovery restore для Compose path.
 - Перевіряє backup set (`SHA256SUMS`, SQL dump, tar.gz архіви), зупиняє stack, відновлює Koha config/data, готує MariaDB/Elasticsearch volumes, імпортує SQL і опційно застосовує PITR.
 - Після restore запускає infra + Koha, нормалізує `koha-conf.xml`, опційно виконує `koha-elasticsearch --rebuild` і post-restore verify.
+- Перед destructive DB restore зупиняє `koha-worker-default`, `koha-worker-long-tasks` та `koha-es-indexer`; workers запускаються тільки після відновлення DB і live-config.
 - Руйнівний сценарій: без `--dry-run` зупиняє stack і очищає bind-volume дані.
 
 #### Manual execution
