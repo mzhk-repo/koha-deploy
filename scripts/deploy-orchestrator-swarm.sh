@@ -361,6 +361,36 @@ force_swarm_service_reconcile() {
   done
 }
 
+deploy_swarm_stack_manifest() {
+  local max_attempts="${ORCHESTRATOR_SWARM_DEPLOY_ATTEMPTS:-3}"
+  local retry_delay="${ORCHESTRATOR_SWARM_DEPLOY_RETRY_DELAY_SECONDS:-5}"
+  local attempt output
+
+  if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    log "ERROR: ORCHESTRATOR_SWARM_DEPLOY_ATTEMPTS must be a positive integer (got: ${max_attempts})"
+    return 1
+  fi
+  if ! [[ "${retry_delay}" =~ ^[0-9]+$ ]]; then
+    log "ERROR: ORCHESTRATOR_SWARM_DEPLOY_RETRY_DELAY_SECONDS must be a non-negative integer (got: ${retry_delay})"
+    return 1
+  fi
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if output="$(docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}" 2>&1)"; then
+      [[ -z "${output}" ]] || printf '%s\n' "${output}"
+      return 0
+    fi
+
+    printf '%s\n' "${output}" >&2
+    if ! grep -Fq -- 'update out of sequence' <<< "${output}" || [[ "${attempt}" -eq "${max_attempts}" ]]; then
+      return 1
+    fi
+
+    log "Swarm manager reported an optimistic update conflict; retrying stack deploy (${attempt}/${max_attempts}) in ${retry_delay}s"
+    sleep "${retry_delay}"
+  done
+}
+
 run_post_deploy_scripts() {
   local wait_timeout="${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
 
@@ -486,7 +516,7 @@ deploy_swarm() {
         -e 's/^([[:space:]]+cpus: )([0-9]+(\.[0-9]+)?)([[:space:]]*)$/\1"\2"\4/' \
         -e 's/^([[:space:]]+mode: )"0?([0-7]+)"/\10\2/' \
       > "${DEPLOY_MANIFEST}"
-    docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+    deploy_swarm_stack_manifest
     force_swarm_service_reconcile
     wait_for_swarm_container koha "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
     wait_for_web_without_embedded_workers "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"
@@ -505,7 +535,7 @@ deploy_swarm() {
     > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
-  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+  deploy_swarm_stack_manifest
   force_swarm_service_reconcile
 
   run_post_deploy_scripts
@@ -548,7 +578,7 @@ deploy_swarm_workers() {
     > "${DEPLOY_MANIFEST}"
 
   log "Deploying only managed worker services for stack ${STACK_NAME}"
-  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
+  deploy_swarm_stack_manifest
 
   for service in "${worker_services[@]}"; do
     wait_for_swarm_container "${service}" "${ORCHESTRATOR_POST_DEPLOY_WAIT_TIMEOUT:-300}"

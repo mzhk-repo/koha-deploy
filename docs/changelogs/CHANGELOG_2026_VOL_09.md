@@ -1,5 +1,23 @@
 # CHANGELOG 2026 VOL 09
 
+### 12) Swarm deploy: повтор transient `update out of sequence`
+
+- Контекст (2026-08-24):
+  - migration deploy застосовує transition manifest, а потім фінальний stack manifest;
+  - Swarm manager іноді повертав `update out of sequence` для `koha-es-indexer` під час другого
+    `docker stack deploy`, через що CI завершувався, хоча помилка є transient optimistic update conflict.
+
+- Зміни:
+  - усі виклики `docker stack deploy` в оркестраторі проходять через обмежений retry wrapper;
+  - повторюється лише точна помилка `update out of sequence`: за замовчуванням до 3 спроб із паузою 5 секунд;
+  - інші помилки deploy не маскуються та одразу завершують виконання з помилкою;
+  - додано параметри `ORCHESTRATOR_SWARM_DEPLOY_ATTEMPTS` і
+    `ORCHESTRATOR_SWARM_DEPLOY_RETRY_DELAY_SECONDS`.
+
+- Перевірено:
+  - додано regression test для одного transient conflict і успішної повторної спроби;
+  - `bash -n`, `shellcheck --severity=warning`, `git diff --check`.
+
 ### 11) Swarm deploy: readiness waits follow the current healthy task
 
 - Контекст (2026-08-22):
