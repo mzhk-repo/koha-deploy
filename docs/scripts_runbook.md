@@ -58,6 +58,7 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 - Порядок фаз: validation -> env resolution -> versioned runtime secret/configs -> optional Ansible secrets refresh -> `init-volumes.sh` -> render stack manifest -> `docker stack deploy` -> post-deploy bootstrap/worker guard/index guard/lockdown.
 - Перед render stack manifest створює Docker secrets і immutable Docker configs з hash-based назвами. Зміна worker guard/supervisor змінює service spec і запускає контрольований update.
 - Якщо існуючий web task має embedded `background_jobs_worker.pl`, спершу deploy-иться `docker-compose.workers-transition.yml` з worker replicas `0`; після підтвердження web без embedded workers deploy-иться фінальний manifest з двома singleton workers.
+- Тимчасовий optimistic conflict Swarm `update out of sequence` під час `docker stack deploy` повторюється до 3 разів з паузою 5 секунд (`ORCHESTRATOR_SWARM_DEPLOY_ATTEMPTS`, `ORCHESTRATOR_SWARM_DEPLOY_RETRY_DELAY_SECONDS`); інші помилки deploy одразу повертаються як failure.
 - Post-deploy чекає `${STACK_NAME}_db`, `${STACK_NAME}_koha` і обидва worker containers.
 - `bootstrap-live-configs.sh`, `koha-background-workers-guard.sh`, `koha-elasticsearch-index-guard.sh` і `koha-lockdown-password-prefs.sh` запускаються після `docker stack deploy` у `DOCKER_RUNTIME_MODE=swarm`.
 
