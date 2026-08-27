@@ -1,5 +1,20 @@
 # CHANGELOG 2026 VOL 09
 
+### 14) OIDC password lockdown: відновлення відсутніх syspref після deploy
+
+- Контекст (2026-08-27):
+  - post-deploy step `koha-lockdown-password-prefs.sh` завершував deploy з помилкою
+    `OpacPasswordChange is not 0`;
+  - у фактичній БД були відсутні `OpacPasswordChange` та `OpacResetPassword`;
+  - скрипт використовував тільки `UPDATE`, тому не створював відсутні рядки й verify коректно виявляв
+    незастосований lockdown.
+
+- Зміни:
+  - застосування переведено на атомарний idempotent `INSERT ... ON DUPLICATE KEY UPDATE` для обох
+    preferences;
+  - після зміни виконується Koha cache flush, щоб runtime одразу побачив lockdown;
+  - додано regression test для обовʼязкового UPSERT і cache flush.
+
 ### 13) Elasticsearch indexer: self-healing `SearchEngine` preflight після host reboot
 
 - Контекст (2026-08-27):

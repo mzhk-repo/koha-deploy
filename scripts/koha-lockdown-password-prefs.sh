@@ -42,13 +42,17 @@ USAGE
 
 apply_changes() {
   log "Applying OIDC lockdown prefs for instance '${KOHA_INSTANCE}'..."
-  docker_runtime_exec koha sh -lc "
-    koha-mysql '${KOHA_INSTANCE}' -e \"
-      UPDATE systempreferences
-      SET value='0'
-      WHERE variable IN ('OpacResetPassword','OpacPasswordChange');
-    \"
+  docker_runtime_exec koha koha-mysql "${KOHA_INSTANCE}" -e "
+    INSERT INTO systempreferences (variable, value)
+    VALUES
+      ('OpacResetPassword', '0'),
+      ('OpacPasswordChange', '0')
+    ON DUPLICATE KEY UPDATE value=VALUES(value);
   "
+
+  log "Flushing Koha cache after password preference update"
+  docker_runtime_exec koha koha-shell "${KOHA_INSTANCE}" -c \
+    'perl -MKoha::Caches -e "Koha::Caches->get_instance->flush_all; print qq(cache flush ok\\n)"'
 }
 
 verify_changes() {
