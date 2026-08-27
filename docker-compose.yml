@@ -241,6 +241,37 @@ services:
         wait_until "koha-conf.xml" test -r "$$KOHA_CONF"
         wait_until "Koha database" koha-mysql "$$KOHA_INSTANCE" -N -B -e "SELECT 1"
 
+        expected_search_engine="$${KOHA_SEARCH_ENGINE:-Elasticsearch}"
+        if [ "$$expected_search_engine" != "Elasticsearch" ]; then
+          echo "ERROR: koha-es-indexer requires KOHA_SEARCH_ENGINE=Elasticsearch when USE_ELASTICSEARCH=true" >&2
+          exit 1
+        fi
+
+        koha_search_engine() {
+          koha-mysql "$$KOHA_INSTANCE" -N -B -e \
+            "SELECT COALESCE(value, '') FROM systempreferences WHERE variable='SearchEngine';" \
+            | tr -d '\r' \
+            | tail -n 1
+        }
+
+        ensure_koha_search_engine() {
+          local current
+          current="$$(koha_search_engine)"
+          if [ "$$current" = "$$expected_search_engine" ]; then
+            return 0
+          fi
+
+          echo "Repairing Koha SearchEngine ($${current:-unset} -> $$expected_search_engine)"
+          koha-mysql "$$KOHA_INSTANCE" -e \
+            "INSERT INTO systempreferences (variable, value) VALUES ('SearchEngine', '$$expected_search_engine') ON DUPLICATE KEY UPDATE value=VALUES(value);"
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MKoha::Caches -e 'Koha::Caches->get_instance->flush_all;'
+
+          [ "$$(koha_search_engine)" = "$$expected_search_engine" ]
+        }
+
+        wait_until "Koha SearchEngine=$$expected_search_engine" ensure_koha_search_engine
+
         tcp_probe() {
           local endpoint="$$1"
           local default_port="$$2"
@@ -448,6 +479,7 @@ services:
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      KOHA_SEARCH_ENGINE: ${KOHA_SEARCH_ENGINE:-Elasticsearch}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}

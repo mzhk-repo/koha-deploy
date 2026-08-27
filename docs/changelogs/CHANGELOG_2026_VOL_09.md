@@ -1,5 +1,20 @@
 # CHANGELOG 2026 VOL 09
 
+### 13) Elasticsearch indexer: self-healing `SearchEngine` preflight після host reboot
+
+- Контекст (2026-08-27):
+  - після перезапуску сервера `koha-es-indexer` входив у restart loop з exit code `11`;
+  - фактична БД не містила `systempreferences.SearchEngine`, тому daemon обирав Zebra,
+    виводив `Not using Elasticsearch` і падав на Elasticsearch-specific виклику;
+  - попередній IaC-патч застосовувався лише в post-deploy bootstrap і не захищав звичайний restart host.
+
+- Зміни:
+  - indexer перед запуском daemon верифікує `SearchEngine` через `koha-mysql`;
+  - коли значення відсутнє або відрізняється, виконується ідемпотентний SQL upsert до
+    `KOHA_SEARCH_ENGINE` (default `Elasticsearch`) та cache flush;
+  - daemon запускається лише після успішного підтвердження керованого значення;
+  - `KOHA_SEARCH_ENGINE` явно передається до Swarm service.
+
 ### 12) Swarm deploy: повтор transient `update out of sequence`
 
 - Контекст (2026-08-24):

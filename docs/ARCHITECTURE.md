@@ -53,6 +53,8 @@
 3. Перед стартом daemon сервіс чекає:
    - live `koha-conf.xml`;
    - SQL availability через `koha-mysql`;
+   - керовану syspref `SearchEngine=Elasticsearch`: якщо значення відсутнє або відрізняється,
+     service ідемпотентно відновлює його з `KOHA_SEARCH_ENGINE` та очищує Koha cache;
    - Elasticsearch TCP availability;
    - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
 4. Після readiness-перевірок supervisor закриває stale RabbitMQ connections, що вже споживають
