@@ -133,21 +133,63 @@ docker_runtime_restart_service() {
   esac
 }
 
-docker_runtime_scale_service() {
-  local service="$1"
-  local replicas="$2"
+docker_runtime_scale_services() {
+  local replicas="$1"
+  shift
+  local services=("$@")
   local stack="${STACK_NAME:-koha}"
 
   case "$(docker_runtime_mode)" in
     compose)
       if [[ "${replicas}" == "0" ]]; then
-        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" stop "${service}"
+        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" stop "${services[@]}"
       else
-        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" up -d "${service}"
+        docker compose -f "${DOCKER_RUNTIME_COMPOSE_FILE:-${KOHA_COMPOSE_FILE}}" up -d "${services[@]}"
       fi
       ;;
     swarm)
-      docker service scale "${stack}_${service}=${replicas}" >/dev/null
+      local scale_args=()
+      local s
+      for s in "${services[@]}"; do
+        if docker service inspect "${stack}_${s}" >/dev/null 2>&1; then
+          scale_args+=("${stack}_${s}=${replicas}")
+        fi
+      done
+      if [[ ${#scale_args[@]} -gt 0 ]]; then
+        docker service scale --detach "${scale_args[@]}" >/dev/null
+      fi
+      ;;
+  esac
+}
+
+docker_runtime_scale_service() {
+  local service="$1"
+  local replicas="$2"
+  docker_runtime_scale_services "${replicas}" "${service}"
+}
+
+docker_runtime_wait_stack_containers_stopped() {
+  local timeout="${1:-45}"
+  local stack="${STACK_NAME:-koha}"
+  local elapsed=0
+
+  case "$(docker_runtime_mode)" in
+    swarm)
+      while [ "${elapsed}" -lt "${timeout}" ]; do
+        local running_cids
+        running_cids="$(docker ps -q --filter "label=com.docker.stack.namespace=${stack}" 2>/dev/null || true)"
+        [ -z "${running_cids}" ] && return 0
+        sleep 2
+        elapsed=$((elapsed + 2))
+      done
+
+      local leftover_cids
+      leftover_cids="$(docker ps -q --filter "label=com.docker.stack.namespace=${stack}" 2>/dev/null || true)"
+      if [ -n "${leftover_cids}" ]; then
+        docker_runtime_log "WARNING: Force stopping lingering containers in stack ${stack}: ${leftover_cids}"
+        # shellcheck disable=SC2086
+        docker kill ${leftover_cids} >/dev/null 2>&1 || true
+      fi
       ;;
   esac
 }

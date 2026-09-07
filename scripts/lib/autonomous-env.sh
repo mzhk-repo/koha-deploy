@@ -73,6 +73,7 @@ decrypt_autonomous_env() {
   AUTONOMOUS_ENV_TMP="$(mktemp /dev/shm/env-XXXXXX)"
   chmod 600 "${AUTONOMOUS_ENV_TMP}"
   sops --decrypt --input-type dotenv --output-type dotenv "${enc_file}" > "${AUTONOMOUS_ENV_TMP}"
+  export AUTONOMOUS_ENV_TMP
 }
 
 load_autonomous_env() {

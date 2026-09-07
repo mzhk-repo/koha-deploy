@@ -1,6 +1,26 @@
 # CHANGELOG 2026 VOL 09
 
-### 14) OIDC password lockdown: відновлення відсутніх syspref після deploy
+### 15) Restore workflow: паралельне масштабування стеку та синхронізація live configs
+
+- Контекст (2026-09-07):
+  - зупинка стеку у `scripts/restore.sh` тривала понад 6 хвилин через послідовне очікування масштабування 8 сервісів;
+  - після розпакування бекапу `koha` не міг стартувати з помилкою `Access denied for user 'koha_db'`, оскільки архів `koha_config.tar.gz` перезаписував `koha-conf.xml` реквізитами DB та RabbitMQ з джерела бекапу (prod);
+  - функція нормалізації викликала `chown` на хості без sudo, завершуючись із `Operation not permitted`;
+  - сервіс `koha-es-indexer` зупинявся на старті, але не повертався до `scale 1`;
+  - імпортовані sysprefs не синхронізувалися з цільовим середовищем після відновлення БД.
+
+- Зміни:
+  - у `scripts/lib/docker-runtime.sh` додано `docker_runtime_scale_services` для паралельного масштабування сервісів Swarm з `--detach` та швидкого завершення завислих контейнерів (`docker_runtime_wait_stack_containers_stopped`), що скоротило час зупинки з ~6.5 хвилин до ~15 секунд;
+  - у `scripts/restore.sh` одразу після розпакування архіву конфігів викликається `bootstrap-live-configs.sh` (модулі `db`, `timezone`, `trusted-proxies`, `memcached`, `message-broker`, `smtp`) з поточного env-файлу цільового середовища;
+  - нормалізацію прав `VOL_KOHA_CONF` переведено виключно у root-контейнер `alpine` з коректним `chown -R`;
+  - у кроці запуску інфраструктури `es`, `rabbitmq`, `memcached` піднімаються паралельно, після старту Koha застосовуються системні налаштування (`search-prefs`, `domain-prefs`, `oidc-prefs`, тощо), запускаються воркери та повертається `koha-es-indexer`;
+  - у `scripts/lib/autonomous-env.sh` додано експорт `AUTONOMOUS_ENV_TMP`;
+  - додано regression test `tests/restore-parallel-scale-and-config-patch.test.sh`.
+
+- Перевірено:
+  - `bash -n`, `shellcheck --severity=warning`, `git diff --check`;
+  - успішне проходження всіх регресійних тестів у `tests/`.
+
 
 - Контекст (2026-08-27):
   - post-deploy step `koha-lockdown-password-prefs.sh` завершував deploy з помилкою
