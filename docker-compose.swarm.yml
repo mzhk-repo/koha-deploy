@@ -15,6 +15,7 @@ services:
           esac
           export "$$line"
         done < /run/secrets/app_env_payload
+        export KOHA_SETUP_SKIP_STEPS="$${KOHA_SETUP_SKIP_STEPS:-} 07-db-import.sh"
         if [ -z "$${MYSQL_PASSWORD:-}" ] && [ -n "$${DB_PASS:-}" ]; then
           export MYSQL_PASSWORD="$${DB_PASS}"
         fi
@@ -51,7 +52,7 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
-      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
+      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-} 07-db-import.sh
       KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
     secrets:
       - source: app_env_payload

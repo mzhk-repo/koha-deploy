@@ -3,7 +3,7 @@
 Це індекс томів changelog. Детальні записи ведуться у `docs/changelogs/`.
 
 ## Поточний активний том
-docs/changelogs/CHANGELOG_2026_VOL_09.md
+docs/changelogs/CHANGELOG_2026_VOL_10.md
 
 ## Політика ротації
 
@@ -15,7 +15,8 @@ docs/changelogs/CHANGELOG_2026_VOL_09.md
 
 ## Томи
 
-- `docs/changelogs/CHANGELOG_2026_VOL_09.md` — active; STOMP workers isolated from the Koha web task.
+- `docs/changelogs/CHANGELOG_2026_VOL_10.md` — active; fail-safe Koha schema initialization policy.
+- `docs/changelogs/CHANGELOG_2026_VOL_09.md` — archived; STOMP workers isolated from the Koha web task.
 
 ## Формат імені файлу
 

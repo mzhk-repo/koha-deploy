@@ -401,6 +401,8 @@ run_post_deploy_scripts() {
   DOCKER_RUNTIME_MODE=swarm
   export ORCHESTRATOR_MODE DOCKER_RUNTIME_MODE STACK_NAME
 
+  run_script "Koha DB schema guard" "${SCRIPT_DIR}/koha-db-schema-guard.sh" --env-file "${ENV_FILE}"
+
   run_script "live config bootstrap" "${SCRIPT_DIR}/bootstrap-live-configs.sh" --env-file "${ENV_FILE}"
 
   wait_for_swarm_container koha "${wait_timeout}"
