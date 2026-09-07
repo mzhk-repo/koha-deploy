@@ -141,6 +141,33 @@ runtime_env_has_key() {
   return 1
 }
 
+runtime_env_get_value() {
+  local env_file="$1"
+  local expected_key="$2"
+  local line key value
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    line="$(printf '%s' "${line}" | sed -E 's/^[[:space:]]*export[[:space:]]+//')"
+    [[ "${line}" == *"="* ]] || continue
+
+    key="${line%%=*}"
+    key="$(printf '%s' "${key}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+    if [[ "${key}" == "${expected_key}" ]]; then
+      value="${line#*=}"
+      value="$(printf '%s' "${value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]$//")"
+      printf '%s' "${value}"
+      return 0
+    fi
+  done < "${env_file}"
+
+  return 1
+}
+
 validate_runtime_env_file() {
   local required_keys=(
     VOL_DB_PATH
@@ -275,6 +302,26 @@ build_swarm_local_images() {
       add_reconcile_changed_service "${service}"
     fi
   done
+}
+
+pre_pull_koha_image() {
+  local koha_image
+  koha_image="$(runtime_env_get_value "${ENV_FILE}" "KOHA_IMAGE" || true)"
+  if [[ -z "${koha_image}" ]]; then
+    koha_image="${KOHA_IMAGE:-}"
+  fi
+
+  if [[ -z "${koha_image}" ]]; then
+    return 0
+  fi
+
+  if docker image inspect "${koha_image}" >/dev/null 2>&1; then
+    log "Koha image already available locally: ${koha_image}"
+    return 0
+  fi
+
+  log "Pre-pulling Koha image before Swarm deploy: ${koha_image}"
+  docker pull "${koha_image}"
 }
 
 add_reconcile_changed_service() {
@@ -505,6 +552,7 @@ deploy_swarm() {
 
   run_pre_deploy_adjacent_scripts
   build_swarm_local_images "${compose_file}"
+  pre_pull_koha_image
 
   if swarm_web_has_embedded_workers; then
     log "Legacy embedded STOMP workers detected; applying transition manifest before starting dedicated workers"
@@ -562,6 +610,7 @@ deploy_swarm_workers() {
   export ORCHESTRATOR_ENV_FILE="${ENV_FILE}"
   prepare_runtime_env_file
   render_versioned_worker_configs
+  pre_pull_koha_image
 
   log "Rendering workers-only Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   KOHA_APP_ENV_PAYLOAD_SECRET_NAME="${KOHA_APP_ENV_PAYLOAD_SECRET_NAME:-workers-only-unused}" \
