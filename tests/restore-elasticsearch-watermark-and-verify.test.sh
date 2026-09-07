@@ -42,3 +42,4 @@ require_pattern "${example_file}" 'ES_DISK_WATERMARK_HIGH=97%'
 require_pattern "${example_file}" 'ES_DISK_WATERMARK_FLOOD_STAGE=98%'
 
 printf 'PASS: Elasticsearch watermark configuration and strict restore verification verified\n'
+
