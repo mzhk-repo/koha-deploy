@@ -1,5 +1,23 @@
 # CHANGELOG 2026 VOL 09
 
+### 17) Live patch adapter: автодетекція Swarm та виправлення середовища виконання syspref модулів
+
+- Контекст (2026-09-07):
+  - під час запуску post-restore sysprefs модуль `search-prefs` завершувався з помилкою `service "koha" is not running`;
+  - `DOCKER_RUNTIME_MODE` не експортувався у середовище дочірніх процесів патч-скриптів, через що `docker_runtime_mode` помилково переходив у Compose fallback замість Swarm;
+  - у `patch-koha-sysprefs-opac-matomo.sh` виклик `cp -a` для тимчасового файлу `mktemp` завершувався з `Invalid argument`.
+
+- Зміни:
+  - `docker_runtime_mode()` тепер автоматично виявляє активний Docker Swarm і наявність сервісу стеку `${STACK_NAME:-koha}`, якщо змінна не задана явно;
+  - `restore.sh`, `bootstrap-live-configs.sh` та `_patch_common.sh` явно експортують `DOCKER_RUNTIME_MODE`, `STACK_NAME` та `ORCHESTRATOR_MODE` у дочірні процеси;
+  - `patch-koha-sysprefs-opac-matomo.sh` переведено на стандартний `cp` без збереження несумісних атрибутів файлу;
+  - перевірено успішне виконання sysprefs модулів через Swarm exec (`koha-mysql` та cache flush).
+
+- Перевірено:
+  - `bash -n`, `shellcheck --severity=warning`, `git diff --check`;
+  - пряме виконання sysprefs модулів проти Swarm стеку;
+  - регресійні тести в `tests/*.test.sh`.
+
 ### 16) Swarm updates: оптимізація healthcheck timing та скорочення monitor duration
 
 - Контекст (2026-09-07):

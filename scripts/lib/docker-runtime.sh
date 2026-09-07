@@ -29,7 +29,19 @@ docker_runtime_mode() {
   if [[ -z "${mode}" ]]; then
     case "${ORCHESTRATOR_MODE:-}" in
       swarm) mode="swarm" ;;
-      *) mode="compose" ;;
+      compose) mode="compose" ;;
+      *)
+        if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q 'active'; then
+          local stack="${STACK_NAME:-koha}"
+          if docker service inspect "${stack}_koha" >/dev/null 2>&1; then
+            mode="swarm"
+          else
+            mode="compose"
+          fi
+        else
+          mode="compose"
+        fi
+        ;;
     esac
   fi
 

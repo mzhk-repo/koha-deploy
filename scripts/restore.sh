@@ -27,7 +27,10 @@ load_env() {
   ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
   load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
   DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  ORCHESTRATOR_MODE="${ORCHESTRATOR_MODE:-swarm}"
+  STACK_NAME="${STACK_NAME:-koha}"
   KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
+  export DOCKER_RUNTIME_MODE ORCHESTRATOR_MODE STACK_NAME KOHA_COMPOSE_FILE
 }
 
 usage() {
