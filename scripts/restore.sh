@@ -265,9 +265,24 @@ EOF
   log "PITR applied up to: ${PITR_TARGET_DATETIME}"
 }
 
+ensure_es_cluster_settings() {
+  is_true "${USE_ELASTICSEARCH:-true}" || return 0
+
+  docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/_cluster/settings" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "persistent": {
+        "cluster.routing.allocation.disk.watermark.low": "'"${ES_DISK_WATERMARK_LOW:-95%}"'",
+        "cluster.routing.allocation.disk.watermark.high": "'"${ES_DISK_WATERMARK_HIGH:-97%}"'",
+        "cluster.routing.allocation.disk.watermark.flood_stage": "'"${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}"'"
+      }
+    }' >/dev/null 2>&1 || true
+}
+
 verify_restore() {
   local biblio_count="0"
-  local es_count="0"
+  local es_count=""
+  local es_index="koha_${KOHA_INSTANCE:-library}_biblios"
 
   # shellcheck disable=SC2016
   biblio_count="$(docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
@@ -276,11 +291,20 @@ verify_restore() {
 
   if is_true "${USE_ELASTICSEARCH:-true}"; then
     es_count="$(docker_runtime_exec es sh -ec '
-      curl -fsS http://localhost:9200/koha_library_biblios/_count 2>/dev/null | sed -n "s/.*\"count\":\([0-9]*\).*/\1/p"
-    ' | tail -n1 || true)"
+      curl -fsS "http://localhost:9200/'"${es_index}"'/_count" 2>/dev/null | sed -n "s/.*\"count\":\([0-9]*\).*/\1/p"
+    ' | tr -d '\r' | tail -n1 || true)"
   fi
 
   log "Verify: biblio_count=${biblio_count}, es_biblios_count=${es_count:-n/a}"
+
+  if is_true "${USE_ELASTICSEARCH:-true}"; then
+    if [ -z "${es_count}" ]; then
+      die "Elasticsearch biblios index (${es_index}) is missing or unreachable"
+    fi
+    if [ "${biblio_count:-0}" -gt 0 ] && [ "${es_count:-0}" -eq 0 ]; then
+      die "Elasticsearch biblios index has 0 records but database has ${biblio_count} biblios"
+    fi
+  fi
 }
 
 main() {
@@ -409,6 +433,8 @@ main() {
   wait_service_healthy es 300
   wait_service_healthy rabbitmq 240
 
+  ensure_es_cluster_settings
+
   docker_runtime_scale_service koha 1
   wait_service_healthy koha 360
 
@@ -433,7 +459,19 @@ main() {
 
   log "[9/9] Reindex + verify"
   if is_true "${RESTORE_REINDEX}" && is_true "${USE_ELASTICSEARCH:-true}"; then
-    docker_runtime_exec koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}"
+    ensure_es_cluster_settings
+    local reindex_output
+    if ! reindex_output="$(docker_runtime_exec koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}" 2>&1)"; then
+      printf '%s\n' "${reindex_output}" >&2
+      die "koha-elasticsearch command failed with non-zero exit status"
+    fi
+    printf '%s\n' "${reindex_output}"
+    if echo "${reindex_output}" | grep -q "Something went wrong rebuilding indexes"; then
+      die "koha-elasticsearch reported an error during index rebuild (see output above)"
+    fi
+    docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/*/_settings" \
+      -H "Content-Type: application/json" \
+      -d '{"index":{"number_of_replicas":0}}' >/dev/null 2>&1 || true
   fi
 
   if is_true "${RESTORE_VERIFY}"; then

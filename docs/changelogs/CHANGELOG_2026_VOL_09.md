@@ -1,5 +1,27 @@
 # CHANGELOG 2026 VOL 09
 
+### 18) Elasticsearch indexing & restore: disk watermark threshold protection, strict reindex validation and single-node replica optimization
+
+- Контекст (2026-09-07):
+  - під час restore на кроці `[9/9]` переіндексація завершувалася з HTTP 599 timeout (`PUT /koha_library_biblios`), через що `es_biblios_count` залишався `n/a`, а в OPAC та службовому клієнті пошук повертав 0 записів попри наявність бібліографічних записів у MariaDB;
+  - першопричина: використання диска на хості сягало 90.3%, що перевищувало стандартний Elasticsearch high watermark (90%), блокуючи алокацію primary shards на новоствореному порожньому ES volume (`decider: disk_threshold, decision: NO`);
+  - скрипт `koha-elasticsearch` перехоплював помилку `rebuild_elasticsearch.pl` і повертав `exit 0`, а `verify_restore` лише логував значення `es_biblios_count=n/a` без зупинки процесу з помилкою.
+
+- Зміни:
+  - у `docker-compose.yml` для сервісу `es` додано налаштування водних знаків диска: `cluster.routing.allocation.disk.threshold_enabled=true`, `cluster.routing.allocation.disk.watermark.low=${ES_DISK_WATERMARK_LOW:-95%}`, `high=${ES_DISK_WATERMARK_HIGH:-97%}`, `flood_stage=${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}`;
+  - змінні задокументовано у `.env.example`;
+  - у `scripts/restore.sh` та `scripts/koha-elasticsearch-index-guard.sh` додано функцію `ensure_es_cluster_settings`, яка застосовує пороги водних знаків через REST API кластера безпосередньо після старту ES та перед запуском reindex;
+  - у `scripts/restore.sh` та `scripts/koha-elasticsearch-index-guard.sh` додано перевірку виводу `koha-elasticsearch --rebuild` на наявність помилок та автоматичне переведення `number_of_replicas: 0` для single-node кластера (статус кластера стає `green`);
+  - у `verify_restore()` додано сувору перевірку: процес завершується з `die`, якщо індекс відсутній або якщо `biblio_count > 0`, а `es_count == 0`;
+  - у `scripts/koha-elasticsearch-index-guard.sh` забезпечено експорт `DOCKER_RUNTIME_MODE`, `STACK_NAME`, `ORCHESTRATOR_MODE`;
+  - додано новий регресійний тест `tests/restore-elasticsearch-watermark-and-verify.test.sh`.
+
+- Перевірено:
+  - ручна переіндексація через `koha-elasticsearch --rebuild -v library` успішно проіндексувала всі 7 biblios та 85 authorities;
+  - статус кластера ES перейшов у `green` (`http://localhost:9200/_cluster/health`);
+  - пошук в OPAC через HTTP (`http://localhost:8082`) повернув коректні україномовні записи з бази;
+  - `bash -n`, `shellcheck`, `scripts/verify-env.sh` та всі 7 тестів у `tests/*.test.sh` пройдено успішно.
+
 ### 17) Live patch adapter: автодетекція Swarm та виправлення середовища виконання syspref модулів
 
 - Контекст (2026-09-07):
