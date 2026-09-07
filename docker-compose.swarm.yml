@@ -57,21 +57,21 @@ services:
       - source: app_env_payload
         target: app_env_payload
     healthcheck:
-      start_period: 360s
-      interval: 30s
-      timeout: 10s
+      start_period: 120s
+      interval: 10s
+      timeout: 5s
       retries: 3
     deploy:
       replicas: 1
       update_config:
         parallelism: 1
         failure_action: rollback
-        monitor: 120s
+        monitor: 15s
         order: start-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: start-first
       restart_policy:
         condition: any
@@ -118,12 +118,12 @@ services:
       update_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       restart_policy:
         condition: any
@@ -164,12 +164,12 @@ services:
       update_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       restart_policy:
         condition: any

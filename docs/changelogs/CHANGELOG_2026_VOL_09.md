@@ -1,5 +1,23 @@
 # CHANGELOG 2026 VOL 09
 
+### 16) Swarm updates: оптимізація healthcheck timing та скорочення monitor duration
+
+- Контекст (2026-09-07):
+  - під час `docker service update` оновлення сервісу `koha` штучно затримувалося на 120 секунд через `update_config.monitor: 120s`;
+  - `interval: 30s` у Swarm override змушував очікувати першого healthcheck до 30 секунд навіть після швидкого старту бекенду;
+  - `start_period: 360s` був надлишковим для нормального старту Koha.
+
+- Зміни:
+  - у `docker-compose.swarm.yml` для `koha` зменшено `start_period` до `120s` (максимальний час холодного старту), інтервал перевірки здоров'я скорочено до `10s`, таймаут до `5s`;
+  - час контролю стабільності після переходу в healthy (`update_config.monitor` та `rollback_config.monitor`) скорочено зі 120s до `15s` для `koha`, `koha-worker-default` та `koha-worker-long-tasks`;
+  - у `docker-compose.yml` параметри healthcheck `koha` приведені у відповідність (`interval: 10s`, `start_period: 120s`, `retries: 3`);
+  - застосовано оновлення параметрів до запущених сервісів у Swarm кластері.
+
+- Перевірено:
+  - `docker compose config` із `.env.example`;
+  - `docker service update` для `koha_koha`, час збіжності після готовності скоротився зі 120 с до 10–15 с;
+  - тести в `tests/*.test.sh`.
+
 ### 15) Restore workflow: паралельне масштабування стеку та синхронізація live configs
 
 - Контекст (2026-09-07):
@@ -21,8 +39,7 @@
   - `bash -n`, `shellcheck --severity=warning`, `git diff --check`;
   - успішне проходження всіх регресійних тестів у `tests/`.
 
-
-- Контекст (2026-08-27):
+### 14) OIDC password lockdown: відновлення відсутніх syspref після deploy
   - post-deploy step `koha-lockdown-password-prefs.sh` завершував deploy з помилкою
     `OpacPasswordChange is not 0`;
   - у фактичній БД були відсутні `OpacPasswordChange` та `OpacResetPassword`;
