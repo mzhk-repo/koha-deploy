@@ -133,7 +133,7 @@ services:
         target: /usr/local/sbin/koha-worker
         mode: 0555
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${KOHA_INTRANET_PORT:-8081} || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null --timeout=4 http://localhost:$${KOHA_INTRANET_PORT:-8081}/api/v1/public/libraries?_per_page=1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

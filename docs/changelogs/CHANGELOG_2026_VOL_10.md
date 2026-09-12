@@ -78,3 +78,12 @@
   command quoting без вкладених shell-аргументів.
 - Перевірено реальний set/get/delete probe у запущеному dev Koha-контейнері:
   `Memcached session probe ok`.
+
+### 6) Koha sessions: healthcheck переведено на session-free public REST endpoint
+
+- Koha healthcheck замінено з `HEAD /` на GET
+  `/api/v1/public/libraries?_per_page=1`.
+- `api-prefs` bootstrap тепер гарантує `RESTPublicAPI=1`, необхідний для
+  доступу endpoint без login/session flow.
+- Додано regression-перевірку endpoint і видалення старого `--spider`
+  healthcheck-патерна.

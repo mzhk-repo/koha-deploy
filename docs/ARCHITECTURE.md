@@ -118,6 +118,8 @@ Session storage:
 - Koha web виконує fail-closed TCP preflight Memcached до `/init`; при недоступному Memcached
   Plack не запускається.
 - Memcached має локальний TCP healthcheck; його cache limit залишається штатним `64 MB`.
+- Koha healthcheck виконує GET до `/api/v1/public/libraries?_per_page=1`, а bootstrap гарантує
+  `RESTPublicAPI=1`, щоб healthcheck не проходив login/session flow.
 
 ## 6) Trusted proxy / real IP модель
 

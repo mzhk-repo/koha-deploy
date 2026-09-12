@@ -36,7 +36,7 @@ bool_to_01() {
 
 REST_BASIC_AUTH="$(bool_to_01 "${KOHA_REST_BASIC_AUTH:-1}" "KOHA_REST_BASIC_AUTH")"
 
-log "Patching systempreferences: RESTBasicAuth=${REST_BASIC_AUTH}"
+log "Patching systempreferences: RESTBasicAuth=${REST_BASIC_AUTH}, RESTPublicAPI=1"
 
 if ${DRY_RUN}; then
   log "DRY-RUN: skip DB update and Koha cache flush"
@@ -44,9 +44,11 @@ if ${DRY_RUN}; then
 fi
 
 SQL="
-UPDATE systempreferences SET value='${REST_BASIC_AUTH}' WHERE variable='RESTBasicAuth';
+INSERT INTO systempreferences (variable, value)
+VALUES ('RESTBasicAuth', '${REST_BASIC_AUTH}'), ('RESTPublicAPI', '1')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
 SELECT variable, value FROM systempreferences
-WHERE variable IN ('RESTBasicAuth')
+WHERE variable IN ('RESTBasicAuth','RESTPublicAPI')
 ORDER BY variable;
 "
 
