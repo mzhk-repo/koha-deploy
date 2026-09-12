@@ -110,6 +110,15 @@
 - `oidc-prefs`
 - `verify`
 
+Session storage:
+- `KOHA_SESSION_STORAGE` має дозволені значення `mysql` і `memcached`, за замовчуванням `mysql` до
+  окремого rollout.
+- Для `memcached` bootstrap виконує реальний set/get/delete probe через `Koha::Caches`, потім
+  ідемпотентно встановлює та перевіряє `SessionStorage=memcached`.
+- Koha web виконує fail-closed TCP preflight Memcached до `/init`; при недоступному Memcached
+  Plack не запускається.
+- Memcached має локальний TCP healthcheck; його cache limit залишається штатним `64 MB`.
+
 ## 6) Trusted proxy / real IP модель
 
 Щоб не втрачати client IP у ланцюжку `Cloudflare -> Traefik -> Apache`:

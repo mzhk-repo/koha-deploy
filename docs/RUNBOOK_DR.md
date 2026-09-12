@@ -10,6 +10,25 @@
 
 Параметри RPO/RTO мають бути підтверджені регулярним restore-test (мінімум щомісяця).
 
+## 1.1. Baseline Koha sessions → Memcached
+
+Readonly snapshot для Ітерації 0 дорожньої карти, знятий 2026-09-12 14:34 UTC
+(17:34 за Europe/Kyiv) із запущеного Swarm-стеку `koha`:
+
+- MariaDB `sessions`: `COUNT(*)=2,033,162`.
+- Розмір таблиці за `information_schema`: `data_length=475,004,928` bytes
+  (приблизно 453 MiB); `index_length=0`.
+- Binlog: `mysql-bin.000009:2224172`; `log_bin=ON`; `binlog_format=ROW`;
+  retention `604800` seconds / 7 днів.
+- Розмір raw binlog-файлів, створених 2026-09-07—2026-09-12
+  (`mysql-bin.000001`—`mysql-bin.000009`, без `.idx`): `1,203,022,994` bytes
+  (приблизно 1,147 MiB / 1.12 GiB).
+- Memcached: `curr_items=61`, `bytes=11,420`, `evictions=0`.
+
+Це readonly baseline; deploy, restore, очищення `sessions` і зміна grants не
+виконувалися. Binlog position отримано через runtime Docker Secret без виводу
+його значення.
+
 ## 2. Що саме бекапиться
 
 `scripts/backup.sh` створює backup set:

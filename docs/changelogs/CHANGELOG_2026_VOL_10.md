@@ -46,3 +46,26 @@
   - пройдено всі тести у `tests/*.sh`, включно з `tests/deploy-orchestrator-pre-pull.test.sh`;
   - `git diff --check`.
 
+### 3) Koha sessions → Memcached: зафіксовано readonly baseline Ітерації 0
+
+- Зафіксовано baseline у `docs/RUNBOOK_DR.md` перед будь-яким перемиканням
+  backend сесій або очищенням таблиці:
+  - `sessions`: `2,033,162` рядків і `data_length=475,004,928` bytes;
+  - binlog position `mysql-bin.000009:2224172`, `ROW`, retention 7 днів;
+  - raw binlog-файли за 2026-09-07—2026-09-12: `1,203,022,994` bytes;
+  - Memcached: `curr_items=61`, `bytes=11,420`, `evictions=0`.
+- Runtime deploy, restore, `TRUNCATE` і зміна grants не виконувалися.
+
+### 4) Koha sessions → Memcached: додано bootstrap і fail-closed preflight
+
+- Додано `KOHA_SESSION_STORAGE` до env-контракту (`mysql` за замовчуванням,
+  `memcached` для rollout).
+- Додано bootstrap-модуль `session-storage`, який для Memcached виконує
+  set/get/delete roundtrip через `Koha::Caches`, ідемпотентно встановлює
+  `SessionStorage` та перевіряє результат.
+- Koha web у Compose/Swarm очікує доступний Memcached до `/init`, якщо вибрано
+  `KOHA_SESSION_STORAGE=memcached`; таймаут preflight завершує старт з помилкою.
+- Додано TCP healthcheck для Memcached і regression test
+  `tests/koha-session-storage.test.sh`.
+- Перевірено: `bash -n`, ShellCheck, усі `tests/*.sh`, env validation,
+  Compose rendering і `git diff --check`. Runtime rollout не виконувався.

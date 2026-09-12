@@ -21,7 +21,7 @@ Usage: ./scripts/bootstrap-live-configs.sh [options]
 
 Module selection:
   --all                 Run all modules (default if none selected)
-  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
+  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,session-storage,message-broker,smtp,search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
   --module NAME         Repeatable module selector (same names as above)
   --list-modules        Print available modules and exit
 
@@ -39,12 +39,13 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(db timezone trusted-proxies memcached message-broker smtp search-prefs api-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
+MODULE_ORDER=(db timezone trusted-proxies memcached session-storage message-broker smtp search-prefs api-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
 declare -A MODULE_SCRIPT=(
   [db]="patch-koha-conf-xml-db.sh"
   [timezone]="patch-koha-conf-xml-timezone.sh"
   [trusted-proxies]="patch-koha-conf-xml-trusted-proxies.sh"
   [memcached]="patch-koha-conf-xml-memcached.sh"
+  [session-storage]="patch-koha-session-storage.sh"
   [message-broker]="patch-koha-conf-xml-message-broker.sh"
   [smtp]="patch-koha-conf-xml-smtp.sh"
   [search-prefs]="patch-koha-sysprefs-search.sh"
@@ -198,7 +199,7 @@ for mod in "${selected_modules[@]}"; do
     csp-report-only)
       restart_probe_file="${CSP_CONFIG_FILE}"
       ;;
-    search-prefs|api-prefs|domain-prefs|identity-provider|oidc-prefs|opac-matomo)
+    session-storage|search-prefs|api-prefs|domain-prefs|identity-provider|oidc-prefs|opac-matomo)
       sysprefs_applied=true
       ;;
   esac

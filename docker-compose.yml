@@ -21,6 +21,18 @@ services:
             rm -f "$$s6_marker"
           done
         fi
+        if [ "$${KOHA_SESSION_STORAGE:-mysql}" = memcached ]; then
+          i=0
+          while ! perl -MIO::Socket::INET -e '
+            my ($$server) = split(/[[:space:],]+/, $$ENV{MEMCACHED_SERVERS} || "memcached:11211");
+            my ($$host, $$port) = $$server =~ /^(.*):(\d+)$/;
+            exit(!IO::Socket::INET->new(PeerHost => $$host, PeerPort => $$port, Timeout => 2));
+          ' 2>/dev/null; do
+            [ "$${i}" -lt 150 ] || { echo "ERROR: Memcached preflight timed out" >&2; exit 1; }
+            i=$$((i + 1))
+            sleep 2
+          done
+        fi
         a2enmod remoteip headers >/dev/null 2>&1 || true
         exec /init
     restart: unless-stopped
@@ -94,6 +106,7 @@ services:
       KOHA_BACKGROUND_WORKERS_AUTOSTART: ${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_SESSION_STORAGE: ${KOHA_SESSION_STORAGE:-mysql}
 
       KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
@@ -646,6 +659,11 @@ services:
       - ALL
     networks:
       - kohanet
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/11211'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 networks:
   kohanet:
