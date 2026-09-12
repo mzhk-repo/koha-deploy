@@ -40,12 +40,11 @@ if ${DRY_RUN}; then
 fi
 
 if [ "${SESSION_STORAGE}" = "memcached" ]; then
-  probe_code='my $cache = Koha::Caches->get_instance; my $key = "koha_session_storage_probe_$$"; my $value = "ok"; $cache->set_in_cache($key, $value); die "Memcached set/get probe failed\n" unless ($cache->get_from_cache($key) // "") eq $value; $cache->clear_from_cache($key); die "Memcached delete probe failed\n" if defined $cache->get_from_cache($key); print "Memcached session probe ok\n";'
   docker_runtime_exec koha koha-shell "${KOHA_INSTANCE:-library}" -c \
-    "perl -MKoha::Caches -e '${probe_code}'"
+    'perl -MKoha::Caches -e "my \$cache=Koha::Caches->get_instance; my \$key=q(koha_session_storage_probe); my \$value=q(ok); \$cache->set_in_cache(\$key,\$value); die q(Memcached set/get probe failed\n) unless (\$cache->get_from_cache(\$key) // q()) eq \$value; \$cache->clear_from_cache(\$key); die q(Memcached delete probe failed\n) if defined \$cache->get_from_cache(\$key); print q(Memcached session probe ok\n);"'
 fi
 
 docker_runtime_exec koha koha-shell "${KOHA_INSTANCE:-library}" -c \
-  "perl -MC4::Context -e 'C4::Context->set_preference(\"SessionStorage\", \"${SESSION_STORAGE}\"); die \"SessionStorage verify failed\\n\" unless C4::Context->preference(\"SessionStorage\") eq \"${SESSION_STORAGE}\"; print \"SessionStorage=${SESSION_STORAGE}\\n\";'"
+  "perl -MC4::Context -e \"C4::Context->set_preference(q(SessionStorage), q(${SESSION_STORAGE})); die q(SessionStorage verify failed\\n) unless C4::Context->preference(q(SessionStorage)) eq q(${SESSION_STORAGE}); print q(SessionStorage=${SESSION_STORAGE}\\n);\""
 
 log "Done: SessionStorage=${SESSION_STORAGE}"

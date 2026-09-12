@@ -69,3 +69,12 @@
   `tests/koha-session-storage.test.sh`.
 - Перевірено: `bash -n`, ShellCheck, усі `tests/*.sh`, env validation,
   Compose rendering і `git diff --check`. Runtime rollout не виконувався.
+
+### 5) Koha sessions → Memcached: виправлено quoting bootstrap probe
+
+- Після першого dev rollout `session-storage` падав із `sh: 1: Syntax error:
+  "(" unexpected` під час передачі Perl probe через `koha-shell -c`.
+- Probe і `SessionStorage` verification переведено на сумісний із `koha-shell`
+  command quoting без вкладених shell-аргументів.
+- Перевірено реальний set/get/delete probe у запущеному dev Koha-контейнері:
+  `Memcached session probe ok`.
