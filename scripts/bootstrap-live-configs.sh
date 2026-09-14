@@ -21,7 +21,7 @@ Usage: ./scripts/bootstrap-live-configs.sh [options]
 
 Module selection:
   --all                 Run all modules (default if none selected)
-  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,message-broker,smtp,search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
+  --modules LIST        Comma-separated list: timezone,trusted-proxies,memcached,session-storage,message-broker,smtp,search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify
   --module NAME         Repeatable module selector (same names as above)
   --list-modules        Print available modules and exit
 
@@ -39,12 +39,13 @@ Examples:
 USAGE
 }
 
-MODULE_ORDER=(db timezone trusted-proxies memcached message-broker smtp search-prefs api-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
+MODULE_ORDER=(db timezone trusted-proxies memcached session-storage message-broker smtp search-prefs api-prefs domain-prefs identity-provider oidc-prefs opac-matomo csp-report-only verify)
 declare -A MODULE_SCRIPT=(
   [db]="patch-koha-conf-xml-db.sh"
   [timezone]="patch-koha-conf-xml-timezone.sh"
   [trusted-proxies]="patch-koha-conf-xml-trusted-proxies.sh"
   [memcached]="patch-koha-conf-xml-memcached.sh"
+  [session-storage]="patch-koha-session-storage.sh"
   [message-broker]="patch-koha-conf-xml-message-broker.sh"
   [smtp]="patch-koha-conf-xml-smtp.sh"
   [search-prefs]="patch-koha-sysprefs-search.sh"
@@ -152,8 +153,9 @@ resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
 trap orchestrator_env_cleanup EXIT
 COMPOSE_FILE="$(detect_compose_file)"
 DOCKER_RUNTIME_COMPOSE_FILE="${COMPOSE_FILE}"
-DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
-export DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+DOCKER_RUNTIME_MODE="$(docker_runtime_mode)"
+STACK_NAME="${STACK_NAME:-koha}"
+export DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE DOCKER_RUNTIME_MODE STACK_NAME ORCHESTRATOR_MODE="${DOCKER_RUNTIME_MODE}"
 load_orchestrator_env_file "${ENV_FILE}"
 
 KOHA_INSTANCE="${KOHA_INSTANCE:-library}"
@@ -197,7 +199,7 @@ for mod in "${selected_modules[@]}"; do
     csp-report-only)
       restart_probe_file="${CSP_CONFIG_FILE}"
       ;;
-    search-prefs|api-prefs|domain-prefs|identity-provider|oidc-prefs|opac-matomo)
+    session-storage|search-prefs|api-prefs|domain-prefs|identity-provider|oidc-prefs|opac-matomo)
       sysprefs_applied=true
       ;;
   esac

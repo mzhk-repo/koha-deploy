@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-08-21
+Дата оновлення: 2026-09-07
 
 ## 1) Призначення репозиторію
 
@@ -53,6 +53,8 @@
 3. Перед стартом daemon сервіс чекає:
    - live `koha-conf.xml`;
    - SQL availability через `koha-mysql`;
+   - керовану syspref `SearchEngine=Elasticsearch`: якщо значення відсутнє або відрізняється,
+     service ідемпотентно відновлює його з `KOHA_SEARCH_ENGINE` та очищує Koha cache;
    - Elasticsearch TCP availability;
    - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
 4. Після readiness-перевірок supervisor закриває stale RabbitMQ connections, що вже споживають
@@ -92,6 +94,10 @@
    - `KOHA_INTRANET_SERVERNAME`
 3. Live-конфіг Koha (`koha-conf.xml`) патчиться через модульні скрипти `scripts/patch/*`.
 4. Оркестратор патчів: `scripts/bootstrap-live-configs.sh`.
+5. Автоматичний import `kohastructure.sql` заборонений: Compose і Swarm завжди додають
+   `07-db-import.sh` до `KOHA_SETUP_SKIP_STEPS`, незалежно від env; Swarm entrypoint повторно встановлює
+   skip після завантаження `app_env_payload`. Перед будь-якими post-deploy syspref-змінами
+   `koha-db-schema-guard.sh` вимагає непорожній `systempreferences.Version`.
 
 Актуальні модулі bootstrap:
 - `timezone`
@@ -103,6 +109,17 @@
 - `identity-provider`
 - `oidc-prefs`
 - `verify`
+
+Session storage:
+- `KOHA_SESSION_STORAGE` має дозволені значення `mysql` і `memcached`, за замовчуванням `mysql` до
+  окремого rollout.
+- Для `memcached` bootstrap виконує реальний set/get/delete probe через `Koha::Caches`, потім
+  ідемпотентно встановлює та перевіряє `SessionStorage=memcached`.
+- Koha web виконує fail-closed TCP preflight Memcached до `/init`; при недоступному Memcached
+  Plack не запускається.
+- Memcached має локальний TCP healthcheck; його cache limit залишається штатним `64 MB`.
+- Koha healthcheck виконує GET до `/api/v1/public/libraries?_per_page=1`, а bootstrap гарантує
+  `RESTPublicAPI=1`, щоб healthcheck не проходив login/session flow.
 
 ## 6) Trusted proxy / real IP модель
 
@@ -132,13 +149,14 @@ Deploy resolver визначає `VOL_DB_PATH` із відповідного SOP
 Основні скрипти:
 1. `scripts/verify-env.sh` — валідація env-моделі.
 2. `scripts/deploy-orchestrator-swarm.sh` — Swarm deploy: validation, volume init, versioned secrets/configs, двофазна worker migration, stack deploy, bootstrap і runtime guards.
-3. `scripts/bootstrap-live-configs.sh` — оркестрація live patch modules.
-4. `scripts/koha-elasticsearch-index-guard.sh` — smart ES guard і перевірка RabbitMQ consumer для `koha-es-indexer`.
-5. `scripts/koha-background-workers-guard.sh` — post-deploy перевірка ізоляції web і рівно одного consumer для кожної worker queue.
-6. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
-7. `scripts/restore.sh` — restore/PITR-процедури.
-8. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
-9. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
+3. `scripts/koha-db-schema-guard.sh` — fail-closed перевірка встановленої Koha schema до post-deploy patch modules.
+4. `scripts/bootstrap-live-configs.sh` — оркестрація live patch modules.
+5. `scripts/koha-elasticsearch-index-guard.sh` — smart ES guard і перевірка RabbitMQ consumer для `koha-es-indexer`.
+6. `scripts/koha-background-workers-guard.sh` — post-deploy перевірка ізоляції web і рівно одного consumer для кожної worker queue.
+7. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
+8. `scripts/restore.sh` — restore/PITR-процедури.
+9. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
+10. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
 
 ## 9) CI/CD архітектура
 
@@ -160,7 +178,7 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 3. SOPS decrypt runtime env у тимчасовий файл
 4. `scripts/deploy-orchestrator-swarm.sh` у `ORCHESTRATOR_MODE=swarm`
 5. `docker stack deploy` з rendered manifest
-6. post-deploy `bootstrap-live-configs.sh`, worker isolation guard, `koha-elasticsearch-index-guard.sh`, password prefs lockdown
+6. post-deploy DB schema guard, `bootstrap-live-configs.sh`, worker isolation guard, `koha-elasticsearch-index-guard.sh`, password prefs lockdown
 7. health/runtime checks для `koha`, обох workers і `koha-es-indexer`
 
 ## 10) Правила і обмеження
@@ -169,6 +187,8 @@ Workflow: `.github/workflows/ci-cd-checks.yml`
 2. Постійні зміни робляться через deploy-репо (compose/env/scripts), а не ручними правками в контейнері.
 3. Для backup/restore використовуються тільки `scripts/backup.sh` і `scripts/restore.sh`.
 4. Зміни фіксуються в активному changelog-томі (`docs/changelogs/`).
+5. Порожня нова БД ініціалізується тільки через Koha Web installer або штатний restore. Deploy для неї
+   завершується fail-closed до syspref patches; після installer оператор повторює deploy.
 
 ## 11) Структура репо (актуальна)
 
@@ -187,6 +207,7 @@ koha-deploy/
     restore.sh
     verify-env.sh
     deploy-orchestrator-swarm.sh
+    koha-db-schema-guard.sh
     bootstrap-live-configs.sh
     koha-elasticsearch-index-guard.sh
     patch/

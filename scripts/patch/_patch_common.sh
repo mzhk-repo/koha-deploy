@@ -60,10 +60,9 @@ parse_common_args() {
 load_env_file() {
   resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}" ENV_FILE
   trap orchestrator_env_cleanup EXIT
-  KOHA_COMPOSE_FILE="$(detect_project_compose_file)"
-  DOCKER_RUNTIME_COMPOSE_FILE="${KOHA_COMPOSE_FILE}"
-  DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
-  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+  DOCKER_RUNTIME_MODE="$(docker_runtime_mode)"
+  STACK_NAME="${STACK_NAME:-koha}"
+  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE DOCKER_RUNTIME_MODE STACK_NAME ORCHESTRATOR_MODE="${DOCKER_RUNTIME_MODE}"
   load_orchestrator_env_file "${ENV_FILE}"
 }
 

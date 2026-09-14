@@ -93,7 +93,9 @@ load_runtime_context() {
   KOHA_COMPOSE_FILE="$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")"
   DOCKER_RUNTIME_COMPOSE_FILE="${KOHA_COMPOSE_FILE}"
   DOCKER_RUNTIME_ENV_FILE="${ENV_FILE}"
-  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE
+  DOCKER_RUNTIME_MODE="$(docker_runtime_mode)"
+  STACK_NAME="${STACK_NAME:-koha}"
+  export KOHA_COMPOSE_FILE DOCKER_RUNTIME_COMPOSE_FILE DOCKER_RUNTIME_ENV_FILE DOCKER_RUNTIME_MODE STACK_NAME ORCHESTRATOR_MODE="${DOCKER_RUNTIME_MODE}"
   load_orchestrator_env_file "${ENV_FILE}"
 
   KOHA_INSTANCE="${KOHA_INSTANCE:-library}"
@@ -193,6 +195,18 @@ wait_for_es_indexer_consumer() {
   die "koha-es-indexer did not attach a RabbitMQ consumer to ${queue} within timeout"
 }
 
+ensure_es_cluster_settings() {
+  docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/_cluster/settings" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "persistent": {
+        "cluster.routing.allocation.disk.watermark.low": "'"${ES_DISK_WATERMARK_LOW:-95%}"'",
+        "cluster.routing.allocation.disk.watermark.high": "'"${ES_DISK_WATERMARK_HIGH:-97%}"'",
+        "cluster.routing.allocation.disk.watermark.flood_stage": "'"${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}"'"
+      }
+    }' >/dev/null 2>&1 || true
+}
+
 wait_for_elasticsearch() {
   local elapsed=0 status
 
@@ -200,6 +214,7 @@ wait_for_elasticsearch() {
   while [ "${elapsed}" -lt "${WAIT_TIMEOUT}" ]; do
     status="$(es_http_status "/")"
     if [ "${status}" = "200" ]; then
+      ensure_es_cluster_settings
       return 0
     fi
     sleep 3
@@ -237,7 +252,19 @@ run_rebuild() {
     return 0
   fi
 
-  docker_runtime_exec koha "${cmd[@]}"
+  ensure_es_cluster_settings
+  local rebuild_output
+  if ! rebuild_output="$(docker_runtime_exec koha "${cmd[@]}" 2>&1)"; then
+    printf '%s\n' "${rebuild_output}" >&2
+    die "koha-elasticsearch command failed with non-zero exit status"
+  fi
+  printf '%s\n' "${rebuild_output}"
+  if echo "${rebuild_output}" | grep -q "Something went wrong rebuilding indexes"; then
+    die "koha-elasticsearch reported an error during index rebuild (see output above)"
+  fi
+  docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/*/_settings" \
+    -H "Content-Type: application/json" \
+    -d '{"index":{"number_of_replicas":0}}' >/dev/null 2>&1 || true
 }
 
 restart_es_indexer() {

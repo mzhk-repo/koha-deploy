@@ -15,6 +15,7 @@ services:
           esac
           export "$$line"
         done < /run/secrets/app_env_payload
+        export KOHA_SETUP_SKIP_STEPS="$${KOHA_SETUP_SKIP_STEPS:-} 07-db-import.sh"
         if [ -z "$${MYSQL_PASSWORD:-}" ] && [ -n "$${DB_PASS:-}" ]; then
           export MYSQL_PASSWORD="$${DB_PASS}"
         fi
@@ -49,29 +50,30 @@ services:
       KOHA_BACKGROUND_WORKERS_AUTOSTART: ${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_SESSION_STORAGE: ${KOHA_SESSION_STORAGE:-mysql}
       KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
-      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
+      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-} 07-db-import.sh
       KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
     secrets:
       - source: app_env_payload
         target: app_env_payload
     healthcheck:
-      start_period: 360s
-      interval: 30s
-      timeout: 10s
+      start_period: 120s
+      interval: 10s
+      timeout: 5s
       retries: 3
     deploy:
       replicas: 1
       update_config:
         parallelism: 1
         failure_action: rollback
-        monitor: 120s
+        monitor: 15s
         order: start-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: start-first
       restart_policy:
         condition: any
@@ -118,12 +120,12 @@ services:
       update_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       restart_policy:
         condition: any
@@ -164,12 +166,12 @@ services:
       update_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       rollback_config:
         parallelism: 1
         failure_action: pause
-        monitor: 120s
+        monitor: 15s
         order: stop-first
       restart_policy:
         condition: any
@@ -228,6 +230,7 @@ services:
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      KOHA_SEARCH_ENGINE: ${KOHA_SEARCH_ENGINE:-Elasticsearch}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
@@ -307,6 +310,11 @@ services:
     pids_limit: !reset null
     restart: !reset null
     image: docker.io/memcached:${MEMCACHED_VERSION:-1.6}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/11211'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     deploy:
       replicas: 1
       restart_policy:

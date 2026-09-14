@@ -1,5 +1,112 @@
 # CHANGELOG 2026 VOL 09
 
+### 18) Elasticsearch indexing & restore: disk watermark threshold protection, strict reindex validation and single-node replica optimization
+
+- Контекст (2026-09-07):
+  - під час restore на кроці `[9/9]` переіндексація завершувалася з HTTP 599 timeout (`PUT /koha_library_biblios`), через що `es_biblios_count` залишався `n/a`, а в OPAC та службовому клієнті пошук повертав 0 записів попри наявність бібліографічних записів у MariaDB;
+  - першопричина: використання диска на хості сягало 90.3%, що перевищувало стандартний Elasticsearch high watermark (90%), блокуючи алокацію primary shards на новоствореному порожньому ES volume (`decider: disk_threshold, decision: NO`);
+  - скрипт `koha-elasticsearch` перехоплював помилку `rebuild_elasticsearch.pl` і повертав `exit 0`, а `verify_restore` лише логував значення `es_biblios_count=n/a` без зупинки процесу з помилкою.
+
+- Зміни:
+  - у `docker-compose.yml` для сервісу `es` додано налаштування водних знаків диска: `cluster.routing.allocation.disk.threshold_enabled=true`, `cluster.routing.allocation.disk.watermark.low=${ES_DISK_WATERMARK_LOW:-95%}`, `high=${ES_DISK_WATERMARK_HIGH:-97%}`, `flood_stage=${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}`;
+  - змінні задокументовано у `.env.example`;
+  - у `scripts/restore.sh` та `scripts/koha-elasticsearch-index-guard.sh` додано функцію `ensure_es_cluster_settings`, яка застосовує пороги водних знаків через REST API кластера безпосередньо після старту ES та перед запуском reindex;
+  - у `scripts/restore.sh` та `scripts/koha-elasticsearch-index-guard.sh` додано перевірку виводу `koha-elasticsearch --rebuild` на наявність помилок та автоматичне переведення `number_of_replicas: 0` для single-node кластера (статус кластера стає `green`);
+  - у `verify_restore()` додано сувору перевірку: процес завершується з `die`, якщо індекс відсутній або якщо `biblio_count > 0`, а `es_count == 0`;
+  - у `scripts/koha-elasticsearch-index-guard.sh` забезпечено експорт `DOCKER_RUNTIME_MODE`, `STACK_NAME`, `ORCHESTRATOR_MODE`;
+  - додано новий регресійний тест `tests/restore-elasticsearch-watermark-and-verify.test.sh`.
+
+- Перевірено:
+  - ручна переіндексація через `koha-elasticsearch --rebuild -v library` успішно проіндексувала всі 7 biblios та 85 authorities;
+  - статус кластера ES перейшов у `green` (`http://localhost:9200/_cluster/health`);
+  - пошук в OPAC через HTTP (`http://localhost:8082`) повернув коректні україномовні записи з бази;
+  - `bash -n`, `shellcheck`, `scripts/verify-env.sh` та всі 7 тестів у `tests/*.test.sh` пройдено успішно.
+
+### 17) Live patch adapter: автодетекція Swarm та виправлення середовища виконання syspref модулів
+
+- Контекст (2026-09-07):
+  - під час запуску post-restore sysprefs модуль `search-prefs` завершувався з помилкою `service "koha" is not running`;
+  - `DOCKER_RUNTIME_MODE` не експортувався у середовище дочірніх процесів патч-скриптів, через що `docker_runtime_mode` помилково переходив у Compose fallback замість Swarm;
+  - у `patch-koha-sysprefs-opac-matomo.sh` виклик `cp -a` для тимчасового файлу `mktemp` завершувався з `Invalid argument`.
+
+- Зміни:
+  - `docker_runtime_mode()` тепер автоматично виявляє активний Docker Swarm і наявність сервісу стеку `${STACK_NAME:-koha}`, якщо змінна не задана явно;
+  - `restore.sh`, `bootstrap-live-configs.sh` та `_patch_common.sh` явно експортують `DOCKER_RUNTIME_MODE`, `STACK_NAME` та `ORCHESTRATOR_MODE` у дочірні процеси;
+  - `patch-koha-sysprefs-opac-matomo.sh` переведено на стандартний `cp` без збереження несумісних атрибутів файлу;
+  - перевірено успішне виконання sysprefs модулів через Swarm exec (`koha-mysql` та cache flush).
+
+- Перевірено:
+  - `bash -n`, `shellcheck --severity=warning`, `git diff --check`;
+  - пряме виконання sysprefs модулів проти Swarm стеку;
+  - регресійні тести в `tests/*.test.sh`.
+
+### 16) Swarm updates: оптимізація healthcheck timing та скорочення monitor duration
+
+- Контекст (2026-09-07):
+  - під час `docker service update` оновлення сервісу `koha` штучно затримувалося на 120 секунд через `update_config.monitor: 120s`;
+  - `interval: 30s` у Swarm override змушував очікувати першого healthcheck до 30 секунд навіть після швидкого старту бекенду;
+  - `start_period: 360s` був надлишковим для нормального старту Koha.
+
+- Зміни:
+  - у `docker-compose.swarm.yml` для `koha` зменшено `start_period` до `120s` (максимальний час холодного старту), інтервал перевірки здоров'я скорочено до `10s`, таймаут до `5s`;
+  - час контролю стабільності після переходу в healthy (`update_config.monitor` та `rollback_config.monitor`) скорочено зі 120s до `15s` для `koha`, `koha-worker-default` та `koha-worker-long-tasks`;
+  - у `docker-compose.yml` параметри healthcheck `koha` приведені у відповідність (`interval: 10s`, `start_period: 120s`, `retries: 3`);
+  - застосовано оновлення параметрів до запущених сервісів у Swarm кластері.
+
+- Перевірено:
+  - `docker compose config` із `.env.example`;
+  - `docker service update` для `koha_koha`, час збіжності після готовності скоротився зі 120 с до 10–15 с;
+  - тести в `tests/*.test.sh`.
+
+### 15) Restore workflow: паралельне масштабування стеку та синхронізація live configs
+
+- Контекст (2026-09-07):
+  - зупинка стеку у `scripts/restore.sh` тривала понад 6 хвилин через послідовне очікування масштабування 8 сервісів;
+  - після розпакування бекапу `koha` не міг стартувати з помилкою `Access denied for user 'koha_db'`, оскільки архів `koha_config.tar.gz` перезаписував `koha-conf.xml` реквізитами DB та RabbitMQ з джерела бекапу (prod);
+  - функція нормалізації викликала `chown` на хості без sudo, завершуючись із `Operation not permitted`;
+  - сервіс `koha-es-indexer` зупинявся на старті, але не повертався до `scale 1`;
+  - імпортовані sysprefs не синхронізувалися з цільовим середовищем після відновлення БД.
+
+- Зміни:
+  - у `scripts/lib/docker-runtime.sh` додано `docker_runtime_scale_services` для паралельного масштабування сервісів Swarm з `--detach` та швидкого завершення завислих контейнерів (`docker_runtime_wait_stack_containers_stopped`), що скоротило час зупинки з ~6.5 хвилин до ~15 секунд;
+  - у `scripts/restore.sh` одразу після розпакування архіву конфігів викликається `bootstrap-live-configs.sh` (модулі `db`, `timezone`, `trusted-proxies`, `memcached`, `message-broker`, `smtp`) з поточного env-файлу цільового середовища;
+  - нормалізацію прав `VOL_KOHA_CONF` переведено виключно у root-контейнер `alpine` з коректним `chown -R`;
+  - у кроці запуску інфраструктури `es`, `rabbitmq`, `memcached` піднімаються паралельно, після старту Koha застосовуються системні налаштування (`search-prefs`, `domain-prefs`, `oidc-prefs`, тощо), запускаються воркери та повертається `koha-es-indexer`;
+  - у `scripts/lib/autonomous-env.sh` додано експорт `AUTONOMOUS_ENV_TMP`;
+  - додано regression test `tests/restore-parallel-scale-and-config-patch.test.sh`.
+
+- Перевірено:
+  - `bash -n`, `shellcheck --severity=warning`, `git diff --check`;
+  - успішне проходження всіх регресійних тестів у `tests/`.
+
+### 14) OIDC password lockdown: відновлення відсутніх syspref після deploy
+  - post-deploy step `koha-lockdown-password-prefs.sh` завершував deploy з помилкою
+    `OpacPasswordChange is not 0`;
+  - у фактичній БД були відсутні `OpacPasswordChange` та `OpacResetPassword`;
+  - скрипт використовував тільки `UPDATE`, тому не створював відсутні рядки й verify коректно виявляв
+    незастосований lockdown.
+
+- Зміни:
+  - застосування переведено на атомарний idempotent `INSERT ... ON DUPLICATE KEY UPDATE` для обох
+    preferences;
+  - після зміни виконується Koha cache flush, щоб runtime одразу побачив lockdown;
+  - додано regression test для обовʼязкового UPSERT і cache flush.
+
+### 13) Elasticsearch indexer: self-healing `SearchEngine` preflight після host reboot
+
+- Контекст (2026-08-27):
+  - після перезапуску сервера `koha-es-indexer` входив у restart loop з exit code `11`;
+  - фактична БД не містила `systempreferences.SearchEngine`, тому daemon обирав Zebra,
+    виводив `Not using Elasticsearch` і падав на Elasticsearch-specific виклику;
+  - попередній IaC-патч застосовувався лише в post-deploy bootstrap і не захищав звичайний restart host.
+
+- Зміни:
+  - indexer перед запуском daemon верифікує `SearchEngine` через `koha-mysql`;
+  - коли значення відсутнє або відрізняється, виконується ідемпотентний SQL upsert до
+    `KOHA_SEARCH_ENGINE` (default `Elasticsearch`) та cache flush;
+  - daemon запускається лише після успішного підтвердження керованого значення;
+  - `KOHA_SEARCH_ENGINE` явно передається до Swarm service.
+
 ### 12) Swarm deploy: повтор transient `update out of sequence`
 
 - Контекст (2026-08-24):

@@ -21,6 +21,18 @@ services:
             rm -f "$$s6_marker"
           done
         fi
+        if [ "$${KOHA_SESSION_STORAGE:-mysql}" = memcached ]; then
+          i=0
+          while ! perl -MIO::Socket::INET -e '
+            my ($$server) = split(/[[:space:],]+/, $$ENV{MEMCACHED_SERVERS} || "memcached:11211");
+            my ($$host, $$port) = $$server =~ /^(.*):(\d+)$/;
+            exit(!IO::Socket::INET->new(PeerHost => $$host, PeerPort => $$port, Timeout => 2));
+          ' 2>/dev/null; do
+            [ "$${i}" -lt 150 ] || { echo "ERROR: Memcached preflight timed out" >&2; exit 1; }
+            i=$$((i + 1))
+            sleep 2
+          done
+        fi
         a2enmod remoteip headers >/dev/null 2>&1 || true
         exec /init
     restart: unless-stopped
@@ -94,10 +106,11 @@ services:
       KOHA_BACKGROUND_WORKERS_AUTOSTART: ${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      KOHA_SESSION_STORAGE: ${KOHA_SESSION_STORAGE:-mysql}
 
       KOHA_SETUP_FAIL_FAST: ${KOHA_SETUP_FAIL_FAST:-false}
       KOHA_SETUP_REQUIRED_STEPS: ${KOHA_SETUP_REQUIRED_STEPS:-00-env-checks.sh}
-      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-}
+      KOHA_SETUP_SKIP_STEPS: ${KOHA_SETUP_SKIP_STEPS:-} 07-db-import.sh
       KOHA_SETUP_ONLY_STEPS: ${KOHA_SETUP_ONLY_STEPS:-}
     depends_on:
       db:
@@ -120,11 +133,11 @@ services:
         target: /usr/local/sbin/koha-worker
         mode: 0555
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${KOHA_INTRANET_PORT:-8081} || exit 1"]
-      interval: 15s
+      test: ["CMD-SHELL", "wget -q -O /dev/null --timeout=4 http://localhost:$${KOHA_INTRANET_PORT:-8081}/api/v1/public/libraries?_per_page=1 || exit 1"]
+      interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 3
+      start_period: 120s
 
   koha-worker-default: &koha_background_worker
     image: ${KOHA_IMAGE}
@@ -240,6 +253,37 @@ services:
 
         wait_until "koha-conf.xml" test -r "$$KOHA_CONF"
         wait_until "Koha database" koha-mysql "$$KOHA_INSTANCE" -N -B -e "SELECT 1"
+
+        expected_search_engine="$${KOHA_SEARCH_ENGINE:-Elasticsearch}"
+        if [ "$$expected_search_engine" != "Elasticsearch" ]; then
+          echo "ERROR: koha-es-indexer requires KOHA_SEARCH_ENGINE=Elasticsearch when USE_ELASTICSEARCH=true" >&2
+          exit 1
+        fi
+
+        koha_search_engine() {
+          koha-mysql "$$KOHA_INSTANCE" -N -B -e \
+            "SELECT COALESCE(value, '') FROM systempreferences WHERE variable='SearchEngine';" \
+            | tr -d '\r' \
+            | tail -n 1
+        }
+
+        ensure_koha_search_engine() {
+          local current
+          current="$$(koha_search_engine)"
+          if [ "$$current" = "$$expected_search_engine" ]; then
+            return 0
+          fi
+
+          echo "Repairing Koha SearchEngine ($${current:-unset} -> $$expected_search_engine)"
+          koha-mysql "$$KOHA_INSTANCE" -e \
+            "INSERT INTO systempreferences (variable, value) VALUES ('SearchEngine', '$$expected_search_engine') ON DUPLICATE KEY UPDATE value=VALUES(value);"
+          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+            perl -I/usr/share/koha/lib -MKoha::Caches -e 'Koha::Caches->get_instance->flush_all;'
+
+          [ "$$(koha_search_engine)" = "$$expected_search_engine" ]
+        }
+
+        wait_until "Koha SearchEngine=$$expected_search_engine" ensure_koha_search_engine
 
         tcp_probe() {
           local endpoint="$$1"
@@ -448,6 +492,7 @@ services:
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       USE_ELASTICSEARCH: ${USE_ELASTICSEARCH:-true}
+      KOHA_SEARCH_ENGINE: ${KOHA_SEARCH_ENGINE:-Elasticsearch}
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-es:9200}
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
@@ -573,6 +618,10 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "true"
+      cluster.routing.allocation.disk.watermark.low: ${ES_DISK_WATERMARK_LOW:-95%}
+      cluster.routing.allocation.disk.watermark.high: ${ES_DISK_WATERMARK_HIGH:-97%}
+      cluster.routing.allocation.disk.watermark.flood_stage: ${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}
       ES_JAVA_OPTS: -Xms512m -Xmx512m
       TZ: ${KOHA_TIMEZONE}
     volumes:
@@ -610,6 +659,11 @@ services:
       - ALL
     networks:
       - kohanet
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/11211'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 networks:
   kohanet:

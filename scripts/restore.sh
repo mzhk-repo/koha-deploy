@@ -27,7 +27,10 @@ load_env() {
   ENVIRONMENT_ARG="$(autonomous_env_arg_from_cli "$@")"
   load_autonomous_env "${PROJECT_ROOT}" "${ENVIRONMENT_ARG}"
   DOCKER_RUNTIME_MODE="${DOCKER_RUNTIME_MODE:-swarm}"
+  ORCHESTRATOR_MODE="${ORCHESTRATOR_MODE:-swarm}"
+  STACK_NAME="${STACK_NAME:-koha}"
   KOHA_COMPOSE_FILE="${KOHA_COMPOSE_FILE:-$(docker_runtime_detect_compose_file "${PROJECT_ROOT}")}"
+  export DOCKER_RUNTIME_MODE ORCHESTRATOR_MODE STACK_NAME KOHA_COMPOSE_FILE
 }
 
 usage() {
@@ -159,32 +162,15 @@ restore_archive_to_path() {
 }
 
 normalize_koha_conf_permissions() {
-  docker run --rm -v "${VOL_KOHA_CONF}:/target" alpine sh -ec '
-    set -eu
-    find /target -type d -exec chmod 2775 {} +
-    find /target -type f -exec chmod 640 {} +
-  '
-}
-
-normalize_koha_conf_memcached() {
-  local memcached_servers="${MEMCACHED_SERVERS:-memcached:11211}"
-  local conf_file="${VOL_KOHA_CONF}/${KOHA_INSTANCE}/koha-conf.xml"
-
-  if [ ! -f "${conf_file}" ]; then
-    conf_file="$(find "${VOL_KOHA_CONF}" -maxdepth 3 -type f -name koha-conf.xml | head -n1 || true)"
-  fi
-
-  if [ -z "${conf_file}" ] || [ ! -f "${conf_file}" ]; then
-    warn "koha-conf.xml not found, skip memcached normalization"
-    return 0
-  fi
-
-  local esc
-  esc="$(printf '%s' "${memcached_servers}" | sed 's/[\\/&]/\\\\&/g')"
-  sed -Ei "s#(<memcached_servers>)[^<]*(</memcached_servers>)#\\1${esc}\\2#" "${conf_file}" || true
-  chown "${KOHA_CONF_UID}:${KOHA_CONF_GID}" "${conf_file}" || true
-  chmod 640 "${conf_file}" || true
-  log "koha-conf.xml memcached_servers => ${memcached_servers}"
+  docker run --rm \
+    -e RESTORE_UID="${KOHA_CONF_UID:-0}" \
+    -e RESTORE_GID="${KOHA_CONF_GID:-1000}" \
+    -v "${VOL_KOHA_CONF}:/target" alpine sh -ec '
+      set -eu
+      find /target -type d -exec chmod 2775 {} +
+      find /target -type f -exec chmod 640 {} +
+      chown -R "${RESTORE_UID}:${RESTORE_GID}" /target
+    '
 }
 
 import_sql_dump() {
@@ -279,9 +265,24 @@ EOF
   log "PITR applied up to: ${PITR_TARGET_DATETIME}"
 }
 
+ensure_es_cluster_settings() {
+  is_true "${USE_ELASTICSEARCH:-true}" || return 0
+
+  docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/_cluster/settings" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "persistent": {
+        "cluster.routing.allocation.disk.watermark.low": "'"${ES_DISK_WATERMARK_LOW:-95%}"'",
+        "cluster.routing.allocation.disk.watermark.high": "'"${ES_DISK_WATERMARK_HIGH:-97%}"'",
+        "cluster.routing.allocation.disk.watermark.flood_stage": "'"${ES_DISK_WATERMARK_FLOOD_STAGE:-98%}"'"
+      }
+    }' >/dev/null 2>&1 || true
+}
+
 verify_restore() {
   local biblio_count="0"
-  local es_count="0"
+  local es_count=""
+  local es_index="koha_${KOHA_INSTANCE:-library}_biblios"
 
   # shellcheck disable=SC2016
   biblio_count="$(docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
@@ -290,11 +291,20 @@ verify_restore() {
 
   if is_true "${USE_ELASTICSEARCH:-true}"; then
     es_count="$(docker_runtime_exec es sh -ec '
-      curl -fsS http://localhost:9200/koha_library_biblios/_count 2>/dev/null | sed -n "s/.*\"count\":\([0-9]*\).*/\1/p"
-    ' | tail -n1 || true)"
+      curl -fsS "http://localhost:9200/'"${es_index}"'/_count" 2>/dev/null | sed -n "s/.*\"count\":\([0-9]*\).*/\1/p"
+    ' | tr -d '\r' | tail -n1 || true)"
   fi
 
   log "Verify: biblio_count=${biblio_count}, es_biblios_count=${es_count:-n/a}"
+
+  if is_true "${USE_ELASTICSEARCH:-true}"; then
+    if [ -z "${es_count}" ]; then
+      die "Elasticsearch biblios index (${es_index}) is missing or unreachable"
+    fi
+    if [ "${biblio_count:-0}" -gt 0 ] && [ "${es_count:-0}" -eq 0 ]; then
+      die "Elasticsearch biblios index has 0 records but database has ${biblio_count} biblios"
+    fi
+  fi
 }
 
 main() {
@@ -374,9 +384,8 @@ main() {
   fi
 
   log "[1/9] Stop stack"
-  for service in koha-worker-default koha-worker-long-tasks koha-es-indexer koha es rabbitmq memcached db; do
-    docker_runtime_scale_service "${service}" 0 || true
-  done
+  docker_runtime_scale_services 0 koha-worker-default koha-worker-long-tasks koha-es-indexer koha es rabbitmq memcached db
+  docker_runtime_wait_stack_containers_stopped 45
 
   log "[2/9] Restore config/data archives"
   restore_archive_to_path "${RESTORE_SOURCE_DIR}/koha_config.tar.gz" "${VOL_KOHA_CONF}" "${KOHA_CONF_UID}" "${KOHA_CONF_GID}"
@@ -386,8 +395,13 @@ main() {
     restore_archive_to_path "${RESTORE_SOURCE_DIR}/koha_logs.tar.gz" "${VOL_KOHA_LOGS}" 1000 1000
   fi
 
+  log "Patching live koha configuration files from target environment"
+  "${SCRIPT_DIR}/bootstrap-live-configs.sh" \
+    --env-file "${AUTONOMOUS_ENV_TMP:-}" \
+    --modules db,timezone,trusted-proxies,memcached,message-broker,smtp \
+    --no-restart
+
   normalize_koha_conf_permissions
-  normalize_koha_conf_memcached
 
   log "[3/9] Prepare DB volume"
   wipe_bind_path "${VOL_DB_PATH}"
@@ -415,25 +429,49 @@ main() {
   fi
 
   log "[8/9] Start infra + koha"
-  docker_runtime_scale_service es 1
-  docker_runtime_scale_service rabbitmq 1
-  docker_runtime_scale_service memcached 1
+  docker_runtime_scale_services 1 es rabbitmq memcached
   wait_service_healthy es 300
   wait_service_healthy rabbitmq 240
+
+  ensure_es_cluster_settings
 
   docker_runtime_scale_service koha 1
   wait_service_healthy koha 360
 
-  normalize_koha_conf_memcached
+  log "Applying live system preferences to restored database"
+  "${SCRIPT_DIR}/bootstrap-live-configs.sh" \
+    --env-file "${AUTONOMOUS_ENV_TMP:-}" \
+    --modules search-prefs,api-prefs,domain-prefs,identity-provider,oidc-prefs,opac-matomo,csp-report-only,verify \
+    --no-restart
 
-  docker_runtime_scale_service koha-worker-default 1
-  docker_runtime_scale_service koha-worker-long-tasks 1
+  if [ -x "${SCRIPT_DIR}/koha-lockdown-password-prefs.sh" ]; then
+    "${SCRIPT_DIR}/koha-lockdown-password-prefs.sh" --env-file "${AUTONOMOUS_ENV_TMP:-}" || true
+  fi
+
+  docker_runtime_scale_services 1 koha-worker-default koha-worker-long-tasks
   wait_service_healthy koha-worker-default 360
   wait_service_healthy koha-worker-long-tasks 360
 
+  if is_true "${USE_ELASTICSEARCH:-true}"; then
+    docker_runtime_scale_service koha-es-indexer 1
+    wait_service_healthy koha-es-indexer 360
+  fi
+
   log "[9/9] Reindex + verify"
   if is_true "${RESTORE_REINDEX}" && is_true "${USE_ELASTICSEARCH:-true}"; then
-    docker_runtime_exec koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}"
+    ensure_es_cluster_settings
+    local reindex_output
+    if ! reindex_output="$(docker_runtime_exec koha koha-elasticsearch --rebuild -v "${KOHA_INSTANCE}" 2>&1)"; then
+      printf '%s\n' "${reindex_output}" >&2
+      die "koha-elasticsearch command failed with non-zero exit status"
+    fi
+    printf '%s\n' "${reindex_output}"
+    if echo "${reindex_output}" | grep -q "Something went wrong rebuilding indexes"; then
+      die "koha-elasticsearch reported an error during index rebuild (see output above)"
+    fi
+    docker_runtime_exec es curl -fsS -X PUT "http://localhost:9200/*/_settings" \
+      -H "Content-Type: application/json" \
+      -d '{"index":{"number_of_replicas":0}}' >/dev/null 2>&1 || true
   fi
 
   if is_true "${RESTORE_VERIFY}"; then

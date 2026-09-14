@@ -55,7 +55,7 @@ fi
 tmp_js="$(mktemp)"
 trap 'rm -f "${tmp_js}"; orchestrator_env_cleanup' EXIT
 
-cp -a "${SOURCE_PATH}" "${tmp_js}"
+cp "${SOURCE_PATH}" "${tmp_js}"
 sed -i "s|__MATOMO_BASE_URL__|${MATOMO_BASE_URL}|g" "${tmp_js}"
 sed -i "s|__MATOMO_SITE_ID__|${MATOMO_SITE_ID}|g" "${tmp_js}"
 sed -i "s|__MATOMO_TRACKER_URL__|${MATOMO_TRACKER_URL}|g" "${tmp_js}"
