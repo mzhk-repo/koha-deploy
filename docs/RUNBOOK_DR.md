@@ -29,6 +29,21 @@ Readonly snapshot для Ітерації 0 дорожньої карти, зн�
 виконувалися. Binlog position отримано через runtime Docker Secret без виводу
 його значення.
 
+### Результат Ітерації 5
+
+2026-09-12 у dev mirror після підтвердження `SessionStorage=memcached` і
+успішного Memcached roundtrip виконано через `koha-mysql`:
+
+```sql
+TRUNCATE TABLE sessions;
+```
+
+- До очищення: `2,033,351` рядків; binlog `mysql-bin.000010:71744`.
+- Після очищення: `COUNT(*)=0`; binlog `mysql-bin.000010:71884`.
+- Новий binlog event: одна коротка Query-подія `TRUNCATE TABLE sessions`.
+- Memcached після операції: `evictions=0`; Memcached не перезапускався і не
+  очищався.
+
 ## 2. Що саме бекапиться
 
 `scripts/backup.sh` створює backup set:

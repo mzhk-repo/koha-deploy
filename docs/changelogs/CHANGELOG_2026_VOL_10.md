@@ -87,3 +87,13 @@
   доступу endpoint без login/session flow.
 - Додано regression-перевірку endpoint і видалення старого `--spider`
   healthcheck-патерна.
+
+### 7) Koha sessions: одноразове очищення після переходу на Memcached
+
+- Після preflight `SessionStorage=memcached` і успішного Memcached roundtrip
+  виконано `TRUNCATE TABLE sessions` у dev mirror.
+- Результат: `sessions` зменшено з `2,033,351` до `0` рядків.
+- Binlog підтверджує одну коротку Query-подію `TRUNCATE TABLE sessions`
+  (`mysql-bin.000010:71744` → `71884`), без масиву DELETE-подій.
+- Memcached залишився доступним, `evictions=0`; окремий cleanup timer не
+  додавався.

@@ -73,12 +73,49 @@
 
 **Мета:** звільнити місце в MariaDB без сплеску binlog.
 
-- В maintenance-вікні вручну через `koha-mysql`:
-  ```sql
-  TRUNCATE TABLE sessions;
+- Виконувати на production host у погоджене maintenance-вікно. Спочатку
+  визначити поточні контейнери та пройти fail-closed preflight:
+
+  ```bash
+  set -euo pipefail
+  KOHA_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=koha_koha | head -n 1)"
+  DB_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=koha_db | head -n 1)"
+  test -n "${KOHA_CID}" && test -n "${DB_CID}"
+
+  docker exec "${KOHA_CID}" koha-mysql library -N -B -e \
+    "SELECT variable, value FROM systempreferences WHERE variable='SessionStorage'; SELECT COUNT(*) FROM sessions;"
+
+  docker exec "${KOHA_CID}" koha-shell library -c \
+    'perl -MKoha::Caches -e "my \$c=Koha::Caches->get_instance; my \$k=q(iteration5_preflight); my \$v=q(ok); \$c->set_in_cache(\$k,\$v); die q(Memcached set/get failed\n) unless (\$c->get_from_cache(\$k)//q()) eq \$v; \$c->clear_from_cache(\$k); die q(Memcached delete failed\n) if defined \$c->get_from_cache(\$k); print q(Memcached roundtrip ok\n);"'
+
+  docker exec "${DB_CID}" sh -ec \
+    'mariadb -uroot -p"$(cat /run/secrets/db_root_password)" -N -B -e "SHOW MASTER STATUS;"'
   ```
-- Перевірити `COUNT(*)=0`.
-- Перевірити, що новий binlog-event — один короткий DDL-запис, а не масив DELETE-подій.
+
+- Якщо `SessionStorage` не дорівнює `memcached` або Memcached roundtrip не
+  пройшов — зупинити процедуру. Не використовувати `ORCHESTRATOR_ALLOW_DB_INIT`.
+- Після успішного preflight виконати через `koha-mysql`:
+
+  ```bash
+  docker exec "${KOHA_CID}" koha-mysql library -e 'TRUNCATE TABLE sessions;'
+  ```
+
+- Перевірити `COUNT(*)=0` і нову binlog position:
+
+  ```bash
+  docker exec "${KOHA_CID}" koha-mysql library -N -B -e \
+    'SELECT COUNT(*) FROM sessions;'
+
+  docker exec "${DB_CID}" sh -ec \
+    'mariadb -uroot -p"$(cat /run/secrets/db_root_password)" -N -B -e "SHOW MASTER STATUS;"'
+
+  docker exec "${DB_CID}" sh -ec \
+    'mariadb -uroot -p"$(cat /run/secrets/db_root_password)" -N -B -e "SHOW BINLOG EVENTS IN \"<BINLOG_FILE_FROM_BEFORE>\" FROM <POSITION_FROM_BEFORE> LIMIT 12;"'
+  ```
+
+- Очікується одна коротка Query-подія `TRUNCATE TABLE sessions`, а не масив
+  DELETE-подій. Не виконувати `PURGE BINARY LOGS`, не перезапускати Memcached
+  і не запускати `TRUNCATE` повторно після успішної перевірки.
 
 **Exit criteria:** таблиця порожня, без користувацьких скарг понад прийнятий одноразовий logout.
 
