@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-09-07
+Дата оновлення: 2026-09-23
 
 ## 1) Призначення репозиторію
 
@@ -154,7 +154,7 @@ Deploy resolver визначає `VOL_DB_PATH` із відповідного SOP
 5. `scripts/koha-elasticsearch-index-guard.sh` — smart ES guard і перевірка RabbitMQ consumer для `koha-es-indexer`.
 6. `scripts/koha-background-workers-guard.sh` — post-deploy перевірка ізоляції web і рівно одного consumer для кожної worker queue.
 7. `scripts/backup.sh` — повний backup (DB + volumes + metadata/checksums).
-8. `scripts/restore.sh` — restore/PITR-процедури.
+8. `scripts/restore.sh` — повне відновлення з SQL-дампу та архівів томів.
 9. `scripts/collect-docker-logs.sh` — централізований експорт docker logs.
 10. `scripts/install-collect-logs-timer.sh` — плановий збір логів через systemd timer.
 

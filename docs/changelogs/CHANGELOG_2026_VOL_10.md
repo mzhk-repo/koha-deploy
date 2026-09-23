@@ -97,3 +97,22 @@
   (`mysql-bin.000010:71744` → `71884`), без масиву DELETE-подій.
 - Memcached залишився доступним, `evictions=0`; окремий cleanup timer не
   додавався.
+
+### 8) MariaDB binlog purge та повний backup без PITR
+
+- Контекст (2026-09-23):
+  - на MariaDB 11.8 `slave_connections_needed_for_purge=1` за відсутності підключених реплік
+    блокував автоматичне очищення старих binlog попри `DB_BINLOG_EXPIRE_DAYS=7`;
+  - backup архівував усі наявні binlog, хоча PITR для цього стеку не використовується.
+
+- Зміни:
+  - у MariaDB Compose command встановлено `--slave-connections-needed-for-purge=0`;
+  - з `backup.sh` вилучено PITR metadata та архівацію binlog; SQL dump, архіви томів,
+    контрольні суми, retention та offsite copy збережено;
+  - з `restore.sh` вилучено `--pitr-datetime` і відтворення binlog; старі повні backup set
+    залишаються придатними для SQL restore;
+  - оновлено env template, валідацію env та операційну документацію. RPO тепер
+    обмежене частотою повних backup.
+
+- Перевірено: `bash -n`, ShellCheck, Compose/Swarm rendering, `git diff --check`.
+  Runtime deploy, purge binlog і restore не виконувалися.

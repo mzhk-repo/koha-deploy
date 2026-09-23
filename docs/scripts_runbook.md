@@ -254,8 +254,8 @@ bash -lc 'source scripts/lib/autonomous-env.sh; load_autonomous_env "$PWD" dev; 
 ### `scripts/backup.sh`
 
 #### Бізнес-логіка
-- Створює повний Koha backup set: MariaDB dump, bind-volume архіви, PITR metadata/binlogs, checksums і manifest.
-- Основні артефакти: `${DB_NAME}.sql.gz`, `koha_config.tar.gz`, `koha_data.tar.gz`, `mariadb_binlogs.tar.gz`, `SHA256SUMS`, `backup_metadata.env`, `backup_manifest.tsv`.
+- Створює повний Koha backup set: MariaDB dump, bind-volume архіви, checksums і manifest.
+- Основні артефакти: `${DB_NAME}.sql.gz`, `koha_config.tar.gz`, `koha_data.tar.gz`, `SHA256SUMS`, `backup_metadata.env`, `backup_manifest.tsv`.
 - Logs і Elasticsearch data архівуються опційно через `BACKUP_INCLUDE_LOGS` / `BACKUP_INCLUDE_ES_DATA`.
 - Підтримує lightweight offsite copy через `BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER`.
 - Локальний retention керується `BACKUP_RETENTION_DAYS`, Google Drive/rclone retention — окремо через `BACKUP_RCLONE_RETENTION_DAYS`.
@@ -295,7 +295,7 @@ SERVER_ENV=prod bash scripts/test-restore.sh --source /var/backups/koha/2026-04-
 
 #### Бізнес-логіка
 - Disaster recovery restore для Compose path.
-- Перевіряє backup set (`SHA256SUMS`, SQL dump, tar.gz архіви), зупиняє stack, відновлює Koha config/data, готує MariaDB/Elasticsearch volumes, імпортує SQL і опційно застосовує PITR.
+- Перевіряє backup set (`SHA256SUMS`, SQL dump, tar.gz архіви), зупиняє stack, відновлює Koha config/data, готує MariaDB/Elasticsearch volumes, імпортує SQL.
 - Після restore запускає infra + Koha, нормалізує `koha-conf.xml`, опційно виконує `koha-elasticsearch --rebuild` і post-restore verify.
 - Перед destructive DB restore зупиняє `koha-worker-default`, `koha-worker-long-tasks` та `koha-es-indexer`; workers запускаються тільки після відновлення DB і live-config.
 - Руйнівний сценарій: без `--dry-run` зупиняє stack і очищає bind-volume дані.
@@ -305,7 +305,6 @@ SERVER_ENV=prod bash scripts/test-restore.sh --source /var/backups/koha/2026-04-
 bash scripts/restore.sh --help
 SERVER_ENV=prod bash scripts/restore.sh --source /srv/backups/koha/2026-04-25_01-30-00 --dry-run
 SERVER_ENV=prod bash scripts/restore.sh --source /srv/backups/koha/2026-04-25_01-30-00 --yes
-bash scripts/restore.sh --env prod --source /srv/backups/koha/2026-04-25_01-30-00 --pitr-datetime "2026-04-25 10:15:00"
 ```
 
 ### `scripts/collect-docker-logs.sh`

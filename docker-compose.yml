@@ -524,6 +524,7 @@ services:
       - --binlog-row-image=${DB_BINLOG_ROW_IMAGE:-FULL}
       - --sync-binlog=${DB_SYNC_BINLOG:-1}
       - --expire-logs-days=${DB_BINLOG_EXPIRE_DAYS:-7}
+      - --slave-connections-needed-for-purge=0
     restart: unless-stopped
     logging:
       driver: json-file

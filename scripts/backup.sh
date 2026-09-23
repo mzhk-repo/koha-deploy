@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Script Purpose: Create full Koha backup set (DB + volumes + PITR artifacts) with integrity metadata.
+# Script Purpose: Create full Koha backup set (DB + volumes) with integrity metadata.
 # Usage: Run on host: ./scripts/backup.sh [options]. See --help for backup scope/retention flags.
 set -euo pipefail
 umask 027
@@ -48,7 +48,7 @@ load_env() {
 
 require_vars() {
   local missing=0
-  for v in DB_NAME DB_USER DB_PASS DB_ROOT_PASS VOL_DB_PATH VOL_KOHA_CONF VOL_KOHA_DATA; do
+  for v in DB_NAME DB_USER DB_PASS DB_ROOT_PASS VOL_KOHA_CONF VOL_KOHA_DATA; do
     if [ -z "${!v:-}" ]; then
       warn "Required var is empty: ${v}"
       missing=1
@@ -160,54 +160,6 @@ archive_bind_path() {
     alpine sh -ec '
       set -eu
       tar -czf "/backup/${ARCHIVE_NAME}" -C /volume .
-    '
-}
-
-collect_master_status() {
-  # shellcheck disable=SC2016
-  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" sh -ec '
-    mariadb -uroot -p"${DB_ROOT_PASS}" -N -e "SHOW MASTER STATUS\\G"
-  ' >"${WORK_DIR}/pitr_master_status.txt" || true
-
-  local file pos
-  file="$(awk -F': ' '/^File:/{print $2; exit}' "${WORK_DIR}/pitr_master_status.txt" || true)"
-  pos="$(awk -F': ' '/^Position:/{print $2; exit}' "${WORK_DIR}/pitr_master_status.txt" || true)"
-
-  {
-    echo "PITR_START_FILE=${file}"
-    echo "PITR_START_POS=${pos}"
-  } >"${WORK_DIR}/pitr_master_status.env"
-
-  # shellcheck disable=SC2016
-  docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" sh -ec '
-    mariadb -uroot -p"${DB_ROOT_PASS}" -N -e "SHOW VARIABLES LIKE \"log_bin\"; SHOW VARIABLES LIKE \"log_bin_basename\"; SHOW VARIABLES LIKE \"log_bin_index\"; SHOW VARIABLES LIKE \"binlog_format\"; SHOW VARIABLES LIKE \"server_id\";"
-  ' >"${WORK_DIR}/mariadb_binlog_variables.txt" || true
-}
-
-archive_binlogs() {
-  local base="${DB_LOG_BIN_BASENAME:-mysql-bin}"
-
-  if [ ! -d "${VOL_DB_PATH}" ]; then
-    warn "DB bind path missing, skip binlogs archive: ${VOL_DB_PATH}"
-    return 0
-  fi
-
-  docker run --rm \
-    -e BINLOG_BASE="${base}" \
-    -v "${VOL_DB_PATH}:/volume:ro" \
-    -v "${WORK_DIR}:/backup" \
-    alpine sh -ec '
-      set -eu
-      if ls "/volume/${BINLOG_BASE}."[0-9][0-9][0-9][0-9][0-9][0-9] >/dev/null 2>&1; then
-        files="$(ls -1 "/volume/${BINLOG_BASE}."[0-9][0-9][0-9][0-9][0-9][0-9] | xargs -n1 basename)"
-        if [ -f "/volume/${BINLOG_BASE}.index" ]; then
-          tar -czf /backup/mariadb_binlogs.tar.gz -C /volume "${BINLOG_BASE}.index" ${files}
-        else
-          tar -czf /backup/mariadb_binlogs.tar.gz -C /volume ${files}
-        fi
-      else
-        echo "no-binlogs" >/backup/mariadb_binlogs.missing
-      fi
     '
 }
 
@@ -416,7 +368,7 @@ main() {
   log "Backup staging dir: ${WORK_DIR}"
   log "Backup destination: ${FINAL_DIR}"
 
-  log "[1/7] Dump MariaDB (${DB_NAME})"
+  log "[1/5] Dump MariaDB (${DB_NAME})"
   # shellcheck disable=SC2016
   docker_runtime_exec db env DB_ROOT_PASS="${DB_ROOT_PASS}" DB_NAME="${DB_NAME}" sh -ec '
     if command -v mariadb-dump >/dev/null 2>&1; then
@@ -429,31 +381,25 @@ main() {
   [ -s "${WORK_DIR}/${DB_NAME}.sql" ] || die "SQL dump is empty"
   gzip -9 "${WORK_DIR}/${DB_NAME}.sql"
 
-  log "[2/7] Collect PITR metadata"
-  collect_master_status
-
-  log "[3/7] Archive database binlogs"
-  archive_binlogs
-
-  log "[4/7] Archive Koha config/data"
+  log "[2/5] Archive Koha config/data"
   archive_bind_path "${VOL_KOHA_CONF}" "koha_config.tar.gz"
   archive_bind_path "${VOL_KOHA_DATA}" "koha_data.tar.gz"
 
-  log "[5/7] Archive logs (optional)"
+  log "[3/5] Archive logs (optional)"
   if is_true "${BACKUP_INCLUDE_LOGS}"; then
     archive_bind_path "${VOL_KOHA_LOGS:-}" "koha_logs.tar.gz"
   else
     log "Logs archive skipped (BACKUP_INCLUDE_LOGS=${BACKUP_INCLUDE_LOGS})"
   fi
 
-  log "[6/7] Archive Elasticsearch data (optional)"
+  log "[4/5] Archive Elasticsearch data (optional)"
   if is_true "${BACKUP_INCLUDE_ES_DATA}"; then
     archive_bind_path "${VOL_ES_PATH:-}" "es_data.tar.gz"
   else
     log "ES data archive skipped (BACKUP_INCLUDE_ES_DATA=${BACKUP_INCLUDE_ES_DATA})"
   fi
 
-  log "[7/7] Verify artifacts, checksums, metadata"
+  log "[5/5] Verify artifacts, checksums, metadata"
   verify_backup_artifacts
   write_metadata
 

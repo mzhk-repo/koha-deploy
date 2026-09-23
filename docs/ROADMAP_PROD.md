@@ -1,6 +1,6 @@
 Roadmap: Koha Production Hardening and Performance (v2)
 
-Дата оновлення: 2026-02-28
+Дата оновлення: 2026-09-23
 
 Ціль: стабільний, керований і продуктивний production з передбачуваним деплоєм та відновленням.
 
@@ -16,7 +16,7 @@ Roadmap: Koha Production Hardening and Performance (v2)
 4. Least privilege: мінімальні права в CI, контейнерах і доступах операторів.
 5. Observability first: кожна критична зміна має healthcheck/метрику/лог і алерт.
 6. Automated rollback: для кожного релізу є чітка команда/процедура повернення.
-7. DR by practice: restore/PITR перевіряються регулярно, не лише декларуються.
+7. DR by practice: повне відновлення перевіряється регулярно, а не лише декларується.
 8. Runbook-driven ops: інциденти закриваються за короткими runbook'ами і постмортемом.
 9. SLO-driven tuning: продуктивність тюнимо за SLI/SLO (p95 latency, error rate, saturation), а не за суб'єктивними відчуттями.
 10. Change discipline: кожна суттєва зміна фіксується у `CHANGELOG.md` з фактом перевірки.
@@ -29,9 +29,9 @@ Roadmap: Koha Production Hardening and Performance (v2)
 - Додано mandatory secret scan (gitleaks) у CI.
 - Додано реєстр секретів і runbook ротації.
 
-1.6 DR/Backup + PITR
+1.6 DR/Backup
 - Реалізовані scripts/backup.sh і scripts/restore.sh.
-- Є dry-run/full restore/PITR verify.
+- Є dry-run/full restore/restore smoke.
 - Є автоматичний ES rebuild після restore.
 - Є DR runbook і підтверджений restore test.
 -->
@@ -199,7 +199,7 @@ Go-live дозволений лише коли одночасно виконан
 1. Security: секрети, ротація, mandatory scans.
 2. Delivery: branch protection + required checks + immutable images.
 3. Runtime: hardening, limits, healthchecks, log rotation.
-4. Recovery: регулярний restore test + підтверджений PITR.
+4. Recovery: регулярний restore test із повного backup.
 5. Observability: алерти та дашборди на критичні сценарії.
 6. Performance: зафіксовані базові SLO і пройдений load/smoke тест.
 
