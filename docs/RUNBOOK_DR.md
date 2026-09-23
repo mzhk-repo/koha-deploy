@@ -1,6 +1,6 @@
-# DR Runbook (Backup, Restore, PITR)
+# DR Runbook (Backup, Restore)
 
-Дата: 2026-02-28
+Дата оновлення: 2026-09-23
 Сфера: Koha stack (`db`, `koha`, `es`, `rabbitmq`, `memcached`)
 
 ## 1. Цілі
@@ -52,8 +52,6 @@ TRUNCATE TABLE sessions;
 - `koha_config.tar.gz`
 - `koha_data.tar.gz`
 - `koha_logs.tar.gz` (опційно)
-- `mariadb_binlogs.tar.gz` (для PITR)
-- PITR metadata (`pitr_master_status.env`, `pitr_master_status.txt`, `mariadb_binlog_variables.txt`)
 - `SHA256SUMS`, `backup_manifest.tsv`, `backup_metadata.env`
 
 Примітка: raw Elasticsearch data за замовчуванням **не** бекапиться (`BACKUP_INCLUDE_ES_DATA=false`). Після restore виконується rebuild індексів.
@@ -71,6 +69,8 @@ TRUNCATE TABLE sessions;
 - `DB_BINLOG_FORMAT=ROW`
 - `DB_SYNC_BINLOG=1`
 - `DB_BINLOG_EXPIRE_DAYS=7`
+
+`docker-compose.yml` задає `slave_connections_needed_for_purge=0`: без реплік MariaDB може автоматично очищати binlog після завершення строку зберігання. Backup set не містить binlog; відновлення можливе до моменту останнього повного backup.
 
 ## 4. Регулярний backup
 
@@ -192,24 +192,7 @@ Backup set містить `koha_config.tar.gz`, тому full restore повер
 
 Примітка: `chown: changing ownership of '.../koha-conf.xml': Operation not permitted` під час restore не є блокером, якщо наступний `verify` проходить і сервіси стають `healthy`.
 
-## 8. PITR restore (до timestamp)
-
-Приклад:
-
-```bash
-./scripts/restore.sh \
-  --env prod \
-  --source /path/to/backup_dir \
-  --pitr-datetime "2026-02-28 12:30:00" \
-  --yes
-```
-
-Вимоги для PITR:
-
-- у backup set має бути `mariadb_binlogs.tar.gz`
-- бажано `pitr_master_status.env` для коректного старту реплею binlog
-
-## 9. Післяаварійна перевірка
+## 8. Післяаварійна перевірка
 
 Перевірити:
 
@@ -227,7 +210,7 @@ docker compose exec -T es sh -lc 'curl -s http://localhost:9200/_cat/indices?v |
 docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
 ```
 
-## 10. Restore-test (щомісячно)
+## 9. Restore-test (щомісячно)
 
 Мінімальний протокол:
 
@@ -243,7 +226,7 @@ docker compose exec -T rabbitmq rabbitmq-plugins list | grep -i stomp
 6. Перевірити доступність каталогу, авторизацію, ключові workflows.
 7. Занести результат у журнал інцидентів/операцій.
 
-## 11. Типові збої і дії
+## 10. Типові збої і дії
 
 - ES rebuild впав на `icu_folding`:
   - перевірити `analysis-icu` у ES (`elasticsearch-plugin list`)

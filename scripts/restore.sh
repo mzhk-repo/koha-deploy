@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Script Purpose: Restore Koha from backup set (full restore, optional PITR, verify and reindex workflow).
-# Usage: Run on host: ./scripts/restore.sh --source DIR [--dry-run|--pitr-datetime ...].
+# Script Purpose: Restore Koha from backup set (full restore, verify and reindex workflow).
+# Usage: Run on host: ./scripts/restore.sh --source DIR [--dry-run].
 set -euo pipefail
 umask 027
 
@@ -40,8 +40,6 @@ Usage: ./scripts/restore.sh [options]
 Options:
   --source DIR                 Backup directory to restore from
   --dry-run                    Verify backup set only, do not restore
-  --pitr-datetime "YYYY-MM-DD HH:MM:SS"
-                               Apply binlogs up to timestamp
   --restore-es-data            Restore es_data.tar.gz (default: false)
   --restore-logs               Restore koha_logs.tar.gz (default: false)
   --skip-reindex               Skip koha-elasticsearch --rebuild
@@ -117,7 +115,6 @@ verify_backup_set() {
   verify_archive "${RESTORE_SOURCE_DIR}/koha_data.tar.gz"
   verify_archive "${RESTORE_SOURCE_DIR}/koha_logs.tar.gz"
   verify_archive "${RESTORE_SOURCE_DIR}/es_data.tar.gz"
-  verify_archive "${RESTORE_SOURCE_DIR}/mariadb_binlogs.tar.gz"
 
   if [[ "${SQL_DUMP_FILE}" == *.gz ]]; then
     gzip -t "${SQL_DUMP_FILE}"
@@ -193,78 +190,6 @@ import_sql_dump() {
   fi
 }
 
-apply_pitr() {
-  [ -n "${PITR_TARGET_DATETIME}" ] || return 0
-
-  local archive="${RESTORE_SOURCE_DIR}/mariadb_binlogs.tar.gz"
-  [ -f "${archive}" ] || die "PITR requested but mariadb_binlogs.tar.gz is missing"
-
-  local pitr_tmp
-  pitr_tmp="$(mktemp -d /tmp/koha-pitr-XXXXXX)"
-  trap 'rm -rf "${pitr_tmp}"' RETURN
-
-  tar -xzf "${archive}" -C "${pitr_tmp}"
-
-  local start_file=""
-  local start_pos=""
-  if [ -f "${RESTORE_SOURCE_DIR}/pitr_master_status.env" ]; then
-    # shellcheck disable=SC1090,SC1091
-    . "${RESTORE_SOURCE_DIR}/pitr_master_status.env" || true
-    start_file="${PITR_START_FILE:-}"
-    start_pos="${PITR_START_POS:-}"
-  fi
-
-  docker_runtime_exec db sh -ec 'rm -rf /tmp/koha-pitr-binlogs && mkdir -p /tmp/koha-pitr-binlogs'
-  docker_runtime_cp_to_service db "${pitr_tmp}/." "/tmp/koha-pitr-binlogs/"
-
-  # shellcheck disable=SC2016
-  docker_runtime_exec db env \
-    DB_ROOT_PASS="${DB_ROOT_PASS}" \
-    DB_NAME="${DB_NAME}" \
-    DB_LOG_BIN_BASENAME="${DB_LOG_BIN_BASENAME:-mysql-bin}" \
-    PITR_TARGET_DATETIME="${PITR_TARGET_DATETIME}" \
-    PITR_START_FILE="${start_file}" \
-    PITR_START_POS="${start_pos}" \
-    sh -ec '
-      set -eu
-      command -v mariadb-binlog >/dev/null 2>&1 || { echo "mariadb-binlog not found" >&2; exit 1; }
-
-      all_files="$(ls -1 /tmp/koha-pitr-binlogs/${DB_LOG_BIN_BASENAME}.[0-9][0-9][0-9][0-9][0-9][0-9] 2>/dev/null | sort)"
-      [ -n "${all_files}" ] || { echo "No binlog files found for PITR" >&2; exit 1; }
-
-      selected="${all_files}"
-      if [ -n "${PITR_START_FILE}" ] && [ -f "/tmp/koha-pitr-binlogs/${PITR_START_FILE}" ]; then
-        selected=""
-        start_path="/tmp/koha-pitr-binlogs/${PITR_START_FILE}"
-        while IFS= read -r binlog_file; do
-          [ -n "${binlog_file}" ] || continue
-          if [ "${binlog_file}" \< "${start_path}" ]; then
-            continue
-          fi
-          selected="${selected}${selected:+ }${binlog_file}"
-        done <<EOF
-${all_files}
-EOF
-      fi
-
-      [ -n "${selected}" ] || { echo "No binlogs selected for PITR" >&2; exit 1; }
-
-      cmd="mariadb-binlog --stop-datetime=\"${PITR_TARGET_DATETIME}\""
-      if [ -n "${PITR_START_POS}" ]; then
-        cmd="${cmd} --start-position=${PITR_START_POS}"
-      fi
-
-      # shellcheck disable=SC2086
-      eval "${cmd} ${selected}" | mariadb -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}"
-    '
-
-  docker_runtime_exec db sh -ec 'rm -rf /tmp/koha-pitr-binlogs'
-  rm -rf "${pitr_tmp}"
-  trap - RETURN
-
-  log "PITR applied up to: ${PITR_TARGET_DATETIME}"
-}
-
 ensure_es_cluster_settings() {
   is_true "${USE_ELASTICSEARCH:-true}" || return 0
 
@@ -326,13 +251,11 @@ main() {
   RESTORE_VERIFY="${RESTORE_VERIFY:-true}"
   DRY_RUN="false"
   ASSUME_YES="${ASSUME_YES:-false}"
-  PITR_TARGET_DATETIME="${PITR_TARGET_DATETIME:-}"
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --source) RESTORE_SOURCE_DIR="$2"; shift 2 ;;
       --dry-run) DRY_RUN="true"; shift ;;
-      --pitr-datetime) PITR_TARGET_DATETIME="$2"; shift 2 ;;
       --restore-es-data) RESTORE_ES_DATA="true"; shift ;;
       --restore-logs) RESTORE_LOGS="true"; shift ;;
       --skip-reindex) RESTORE_REINDEX="false"; shift ;;
@@ -368,7 +291,6 @@ main() {
     log "Restore config/data: yes"
     log "Restore logs: ${RESTORE_LOGS}"
     log "Restore ES raw data: ${RESTORE_ES_DATA}"
-    log "PITR target datetime: ${PITR_TARGET_DATETIME:-<none>}"
     log "Reindex ES after restore: ${RESTORE_REINDEX}"
     log "Post-restore verify: ${RESTORE_VERIFY}"
     exit 0
@@ -376,18 +298,17 @@ main() {
 
   log "Restore source: ${RESTORE_SOURCE_DIR}"
   log "Mode: ES_DATA=${RESTORE_ES_DATA}, LOGS=${RESTORE_LOGS}, REINDEX=${RESTORE_REINDEX}, VERIFY=${RESTORE_VERIFY}"
-  [ -z "${PITR_TARGET_DATETIME}" ] || log "PITR target datetime: ${PITR_TARGET_DATETIME}"
 
   if ! is_true "${ASSUME_YES}"; then
     log "Starting restore in 5 seconds... (Ctrl+C to cancel)"
     sleep 5
   fi
 
-  log "[1/9] Stop stack"
+  log "[1/8] Stop stack"
   docker_runtime_scale_services 0 koha-worker-default koha-worker-long-tasks koha-es-indexer koha es rabbitmq memcached db
   docker_runtime_wait_stack_containers_stopped 45
 
-  log "[2/9] Restore config/data archives"
+  log "[2/8] Restore config/data archives"
   restore_archive_to_path "${RESTORE_SOURCE_DIR}/koha_config.tar.gz" "${VOL_KOHA_CONF}" "${KOHA_CONF_UID}" "${KOHA_CONF_GID}"
   restore_archive_to_path "${RESTORE_SOURCE_DIR}/koha_data.tar.gz" "${VOL_KOHA_DATA}" 1000 1000
 
@@ -403,10 +324,10 @@ main() {
 
   normalize_koha_conf_permissions
 
-  log "[3/9] Prepare DB volume"
+  log "[3/8] Prepare DB volume"
   wipe_bind_path "${VOL_DB_PATH}"
 
-  log "[4/9] Prepare Elasticsearch volume"
+  log "[4/8] Prepare Elasticsearch volume"
   if is_true "${RESTORE_ES_DATA}" && [ -f "${RESTORE_SOURCE_DIR}/es_data.tar.gz" ]; then
     restore_archive_to_path "${RESTORE_SOURCE_DIR}/es_data.tar.gz" "${VOL_ES_PATH}" 1000 1000
   else
@@ -414,21 +335,14 @@ main() {
     docker run --rm -v "${VOL_ES_PATH}:/target" alpine sh -ec 'chown -R 1000:1000 /target'
   fi
 
-  log "[5/9] Start DB"
+  log "[5/8] Start DB"
   docker_runtime_scale_service db 1
   wait_service_healthy db 240
 
-  log "[6/9] Import SQL"
+  log "[6/8] Import SQL"
   import_sql_dump
 
-  if [ -n "${PITR_TARGET_DATETIME}" ]; then
-    log "[7/9] Apply PITR"
-    apply_pitr
-  else
-    log "[7/9] PITR skipped"
-  fi
-
-  log "[8/9] Start infra + koha"
+  log "[7/8] Start infra + koha"
   docker_runtime_scale_services 1 es rabbitmq memcached
   wait_service_healthy es 300
   wait_service_healthy rabbitmq 240
@@ -457,7 +371,7 @@ main() {
     wait_service_healthy koha-es-indexer 360
   fi
 
-  log "[9/9] Reindex + verify"
+  log "[8/8] Reindex + verify"
   if is_true "${RESTORE_REINDEX}" && is_true "${USE_ELASTICSEARCH:-true}"; then
     ensure_es_cluster_settings
     local reindex_output

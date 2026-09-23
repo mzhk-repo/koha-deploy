@@ -66,7 +66,7 @@
 2. **Runtime hardening**: `security_opt`, `cap_drop`, memory/cpu limits для всіх сервісів.
 3. **Identity lockdown**: OPAC password reset заблокована через `koha-lockdown-password-prefs.sh`.
 4. **Supply-chain**: Trivy config gate в CI.
-5. **Backup/Restore**: full-featured з dry-run, PITR, автоматичний ES rebuild, rclone offsite, test-restore smoke.
+5. **Backup/Restore**: full-featured з dry-run, автоматичний ES rebuild, rclone offsite, test-restore smoke.
 6. **CI/CD deploy**: автоматичний деплой на `main` через SSH; Swarm orchestrator з SOPS-розшифровкою.
 7. **Traefik gateway**: edge access через `Cloudflare Tunnel -> Traefik -> proxy-net -> koha`; tunnel сервіс видалено з compose.
 8. **SOPS env-flow**: `env.dev.enc`/`env.prod.enc` як SSOT; безпечний dotenv-parser без `source`/eval; автономні скрипти на `/dev/shm`.
@@ -211,7 +211,7 @@ koha-deploy/
 │   ├── koha-elasticsearch-index-guard.sh # Smart ES index guard при deploy
 │   ├── koha-lockdown-password-prefs.sh # Блокування password sysprefs
 │   ├── backup.sh                       # Full backup DB + volumes (--env prod|dev, rclone offsite)
-│   ├── restore.sh                      # Restore / PITR procedure (--env prod|dev)
+│   ├── restore.sh                      # Full restore procedure (--env prod|dev)
 │   ├── test-restore.sh                 # Restore smoke-test у тимчасовий MariaDB container
 │   ├── collect-docker-logs.sh          # Збір логів (--env prod|dev, Swarm mode)
 │   ├── install-collect-logs-timer.sh   # Встановлення systemd timer
@@ -625,9 +625,9 @@ bash scripts/test-restore.sh --env prod   # імпорт SQL dump у temp MariaD
 bash scripts/restore.sh --env prod --dry-run
 ```
 
-**Full restore (PITR):**
+**Full restore:**
 ```bash
-bash scripts/restore.sh --env prod
+bash scripts/restore.sh --env prod --source /path/to/backup_dir --yes
 ```
 
 **Потім:**
