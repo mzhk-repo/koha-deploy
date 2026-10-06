@@ -139,5 +139,11 @@
   - SOPS encryption validator і далі відхиляє наявне порожнє plaintext поле `KOHA_OPAC_PREFIX=`; воно також є у `HEAD` до цієї зміни.
 
 - Runtime acceptance:
-  - dev broker/consumer fault injection, STOMP config runtime read-back, import/index smoke та довгий job не виконувалися: Docker API недоступний у середовищі (`permission denied` на `/var/run/docker.sock`);
+  - після dev redeploy служби RabbitMQ, індексатора та обох worker supervisors запущені `1/1`;
+  - live RabbitMQ config повертає `stomp.tcp_listen_options.keepalive = true`, а sysctl контейнера RabbitMQ — `30/10/4`;
+  - live env індексатора і supervisors має watchdog `10/30`; startup timeout збережено `300s`, worker drain — `300s` для `default` і `1800s` для `long_tasks`;
+  - черги `elastic_index`, `default`, `long_tasks` мають по одному consumer і `0` ready/unacked повідомлень;
+  - контрольовано закрито RabbitMQ-side TCP connections кожного з трьох consumers: кожен consumer повернувся рівно до одного, без зміни task; це перевіряє reconnect після явного broker close, але не silent TCP blackhole/keepalive detection;
+  - однозаписний синтетичний MARCXML імпортовано в Koha та підтверджено документ Elasticsearch HTTP `200`; тестовий запис і документ прибрано;
+  - тривалий активний `long_tasks` job і відтворення TCP blackhole не перевірені. Для першого потрібен більший синтетичний/анонімізований MARCXML; для другого — ізольований fault injection із мережевими правами, недоступними поточному runtime користувачу;
   - production deploy не виконувався. Перед RabbitMQ restart потрібно зупинити створення jobs, дочекатися активних jobs і перевірити порожні черги; постійного RabbitMQ data volume немає.
