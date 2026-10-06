@@ -4,8 +4,8 @@ set -euo pipefail
 RUNTIME_DIR="${KOHA_WORKER_RUNTIME_DIR:-/run/koha-background-workers}"
 QUEUE="${KOHA_WORKER_QUEUE:-}"
 WAIT_TIMEOUT="${KOHA_WORKER_WAIT_TIMEOUT:-300}"
-MONITOR_INTERVAL="${KOHA_WORKER_MONITOR_INTERVAL:-30}"
-CONSUMER_GRACE_SECONDS="${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}"
+MONITOR_INTERVAL="${KOHA_WORKER_MONITOR_INTERVAL:-10}"
+CONSUMER_GRACE_SECONDS="${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-30}"
 DRAIN_TIMEOUT="${KOHA_WORKER_DRAIN_TIMEOUT:-300}"
 MAX_PROCESSES="${MAX_PROCESSES:-1}"
 STALE_CONSUMER_CLEANUP="${KOHA_WORKER_STALE_CONSUMER_CLEANUP:-true}"
@@ -48,7 +48,7 @@ jobs_notification_method() {
 }
 
 rabbitmq_queue_consumers() {
-  runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
+  timeout 7 runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
     perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
       sub xml_value {
         my ($doc, $name) = @_;
@@ -82,7 +82,7 @@ rabbitmq_queue_consumers() {
 }
 
 rabbitmq_close_stale_queue_consumers() {
-  runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
+  timeout 7 runuser --preserve-environment -u "${KOHA_INSTANCE}-koha" -- \
     perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MJSON::PP=decode_json -MC4::Context -e '
       sub xml_value {
         my ($doc, $name) = @_;
@@ -155,6 +155,21 @@ worker_is_running() {
   [[ "${state}" != "Z" ]]
 }
 
+consumer_ownership_status() {
+  local consumers="$1" now="$2"
+  if [[ "${consumers}" =~ ^[0-9]+$ && "${consumers}" -eq 1 ]]; then
+    missing_since=""
+    CONSUMER_OWNERSHIP_STATUS=healthy
+  elif [[ -z "${missing_since}" ]]; then
+    missing_since="${now}"
+    CONSUMER_OWNERSHIP_STATUS=missing
+  elif [[ $((now - missing_since)) -ge "${CONSUMER_GRACE_SECONDS}" ]]; then
+    CONSUMER_OWNERSHIP_STATUS=failed
+  else
+    CONSUMER_OWNERSHIP_STATUS=recovering
+  fi
+}
+
 drain_worker() {
   [[ -n "${WORKER_PID}" ]] || return 0
   kill -0 "${WORKER_PID}" 2>/dev/null || return 0
@@ -200,10 +215,11 @@ healthcheck() {
   [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null
 }
 
-if [[ "${1:-}" == "--check" ]]; then
-  healthcheck
-  exit "$?"
-fi
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${1:-}" == "--check" ]]; then
+    healthcheck
+    exit "$?"
+  fi
 
 validate_configuration
 prepare_paths
@@ -245,27 +261,25 @@ printf '%s\n' starting > "${STATUS_FILE}"
 missing_since=""
 while worker_is_running; do
   consumers="$(rabbitmq_queue_consumers 2>/dev/null || printf 0)"
-  if [[ "${consumers}" =~ ^[0-9]+$ && "${consumers}" -eq 1 ]]; then
-    missing_since=""
-    printf '%s\n' healthy > "${STATUS_FILE}"
-  else
-    if [[ -z "${missing_since}" ]]; then
-      missing_since="${SECONDS}"
+  consumer_ownership_status "${consumers}" "${SECONDS}"
+  case "${CONSUMER_OWNERSHIP_STATUS}" in
+    healthy)
+      printf '%s\n' healthy > "${STATUS_FILE}"
+      ;;
+    missing)
       log "RabbitMQ consumer missing for ${QUEUE} (consumers=${consumers})"
-    elif [[ $((SECONDS - missing_since)) -ge "${CONSUMER_GRACE_SECONDS}" ]]; then
+      ;;
+    failed)
       log "ERROR: RabbitMQ consumer missing for ${QUEUE} for >=${CONSUMER_GRACE_SECONDS}s"
       abort_worker
       exit 1
-    fi
+      ;;
+  esac
 
-    # The supervisor, rather than Docker healthcheck, owns consumer recovery.
-    # Reporting unhealthy here makes Swarm send TERM before the grace period
-    # elapses; TERM then enters the long normal-drain path and leaves a stale
-    # consumer alongside the replacement task. Keep the task healthy until
-    # the supervisor aborts it after the configured grace period.
-    printf '%s\n' healthy > "${STATUS_FILE}"
-  fi
+  # Keep Swarm health green until this watchdog owns and performs recovery.
+  printf '%s\n' healthy > "${STATUS_FILE}"
   sleep "${MONITOR_INTERVAL}"
 done
 
 wait "${WORKER_PID}"
+fi

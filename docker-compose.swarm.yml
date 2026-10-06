@@ -104,8 +104,8 @@ services:
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
-      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
-      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-10}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-30}
       KOHA_WORKER_STALE_CONSUMER_CLEANUP: ${KOHA_WORKER_STALE_CONSUMER_CLEANUP:-true}
       KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_DEFAULT_DRAIN_TIMEOUT:-300}
       KOHA_WORKER_QUEUE: default
@@ -150,8 +150,8 @@ services:
       MB_PORT: ${MB_PORT:-61613}
       MB_USER: ${RABBITMQ_USER}
       KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
-      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
-      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-10}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-30}
       KOHA_WORKER_STALE_CONSUMER_CLEANUP: ${KOHA_WORKER_STALE_CONSUMER_CLEANUP:-true}
       KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_LONG_TASKS_DRAIN_TIMEOUT:-1800}
       KOHA_WORKER_QUEUE: long_tasks
@@ -217,6 +217,10 @@ services:
     restart: !reset null
     depends_on: !reset null
     env_file: !reset []
+    configs:
+      - source: koha_es_indexer_process
+        target: /usr/local/sbin/koha-es-indexer-process
+        mode: 0555
     environment: !override
       MYSQL_SERVER: ${DB_HOST:-db}
       MYSQL_USER: ${DB_USER}
@@ -235,8 +239,8 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
-      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}
-      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-10}
+      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-30}
       KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP: ${KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP:-true}
     deploy:
       replicas: 1
@@ -275,6 +279,13 @@ services:
     configs:
       - source: rabbitmq_enabled_plugins
         target: /etc/rabbitmq/enabled_plugins
+      - source: rabbitmq_runtime_config
+        target: /etc/rabbitmq/rabbitmq.conf
+        mode: 0444
+    sysctls:
+      net.ipv4.tcp_keepalive_time: "30"
+      net.ipv4.tcp_keepalive_intvl: "10"
+      net.ipv4.tcp_keepalive_probes: "4"
     deploy:
       replicas: 1
       restart_policy:
@@ -345,6 +356,12 @@ secrets:
     name: ${RABBITMQ_PASSWORD_SECRET_NAME}
 
 configs:
+  koha_es_indexer_process: !override
+    external: true
+    name: ${KOHA_ES_INDEXER_PROCESS_CONFIG_NAME}
+  rabbitmq_runtime_config:
+    external: true
+    name: ${RABBITMQ_RUNTIME_CONFIG_NAME}
   rabbitmq_enabled_plugins:
     file: ./rabbitmq/enabled_plugins
   koha_worker_autostart_guard: !override

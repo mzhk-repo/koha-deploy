@@ -116,3 +116,28 @@
 
 - Перевірено: `bash -n`, ShellCheck, Compose/Swarm rendering, `git diff --check`.
   Runtime deploy, purge binlog і restore не виконувалися.
+
+### 9) Background STOMP consumer recovery: RabbitMQ keepalive та коротший watchdog
+
+- Контекст (2026-10-05):
+  - RabbitMQ STOMP listener не мав увімкненого TCP keepalive; причинний зв'язок із конкретними зависаннями ще не підтверджений;
+  - watchdog-и опитували consumer кожні 30 секунд із grace period 90 секунд, а індексатор міг зависнути під час необмеженого очікування daemon після `TERM`.
+
+- Зміни:
+  - додано `rabbitmq/rabbitmq.conf` із `stomp.tcp_listen_options.keepalive = true`; config версіонується та підключається до RabbitMQ у Compose/Swarm;
+  - тільки RabbitMQ service отримує sysctl `tcp_keepalive_time=30`, `tcp_keepalive_intvl=10`, `tcp_keepalive_probes=4`;
+  - watchdog defaults індексатора і worker supervisor змінено на poll `10s` / grace `30s`; оновлено `.env.example`, encrypted `env.dev.enc` та `env.prod.enc`;
+  - зовнішній `timeout 7` обмежує повний час RabbitMQ Management API probe індексатора й workers;
+  - індексатор запускає Perl daemon напряму через `setpriv`; спільний process-control helper надсилає `TERM`, чекає до 10 секунд, потім надсилає `KILL` і повертає помилку;
+  - додано behavior checks для consumer stable/recovery/failure transitions та daemon, що ігнорує `TERM`.
+
+- Перевірено:
+  - `bash -n`, ShellCheck (`--severity=warning`), `bash scripts/verify-env.sh --example-only`;
+  - усі `tests/*.sh` пройшли, включно з новими watchdog/process checks;
+  - Compose і Swarm manifests відрендерено; перевірено config mounts, RabbitMQ sysctls і значення watchdog `10/30` у rendered Swarm manifest;
+  - зашифровані dev/prod env розшифровано лише у тимчасовий каталог із правами `0700/0600`, перевірено нові параметри та незмінність решти значень без їхнього виводу;
+  - SOPS encryption validator і далі відхиляє наявне порожнє plaintext поле `KOHA_OPAC_PREFIX=`; воно також є у `HEAD` до цієї зміни.
+
+- Runtime acceptance:
+  - dev broker/consumer fault injection, STOMP config runtime read-back, import/index smoke та довгий job не виконувалися: Docker API недоступний у середовищі (`permission denied` на `/var/run/docker.sock`);
+  - production deploy не виконувався. Перед RabbitMQ restart потрібно зупинити створення jobs, дочекатися активних jobs і перевірити порожні черги; постійного RabbitMQ data volume немає.

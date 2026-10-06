@@ -16,7 +16,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/render-versioned-worker-configs.sh --env-file FILE --write-env-file FILE
 
-Creates immutable Docker configs for managed Koha background worker runtime scripts.
+Creates immutable Docker configs for managed Koha worker and RabbitMQ runtime files.
 USAGE
 }
 
@@ -79,6 +79,8 @@ write_env() {
 
 register_config KOHA_WORKER_AUTOSTART_GUARD_CONFIG_NAME koha_worker_autostart_guard "${PROJECT_ROOT}/scripts/container/koha-worker-autostart-guard.sh"
 register_config KOHA_BACKGROUND_WORKER_SUPERVISOR_CONFIG_NAME koha_background_worker_supervisor "${PROJECT_ROOT}/scripts/container/koha-background-worker-supervisor.sh"
+register_config RABBITMQ_RUNTIME_CONFIG_NAME rabbitmq_runtime_config "${PROJECT_ROOT}/rabbitmq/rabbitmq.conf"
+register_config KOHA_ES_INDEXER_PROCESS_CONFIG_NAME koha_es_indexer_process "${PROJECT_ROOT}/scripts/container/koha-es-indexer-process.sh"
 write_env
 
 for index in "${!CONFIG_KEYS[@]}"; do
