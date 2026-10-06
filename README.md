@@ -909,7 +909,7 @@ docker compose exec koha koha-elasticsearch-indexer --rebuild
 docker system df
 ```
 
-`koha-es-indexer` запускається окремим Swarm service у crash-only моделі: після readiness-перевірок supervisor стартує `es_indexer_daemon.pl`, перевіряє RabbitMQ Management API і завершує контейнер з помилкою, якщо consumer на `koha_${KOHA_INSTANCE}-elastic_index` відсутній довше `KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS`. Restart виконує Compose/Swarm policy. Сервіс не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
+`koha-es-indexer` запускається окремим Swarm service у crash-only моделі: після readiness-перевірок supervisor стартує `es_indexer_daemon.pl` через `setpriv`, перевіряє RabbitMQ Management API з 7s загальним timeout і завершує контейнер з помилкою, якщо consumer на `koha_${KOHA_INSTANCE}-elastic_index` відсутній щонайменше 30s (poll 10s). При зупинці daemon отримує TERM, після 10s — KILL. RabbitMQ STOMP listener використовує TCP keepalive із контейнерними sysctl 30/10/4; це не перевіряє завислий Perl процес за живого TCP-з'єднання. Restart виконує Compose/Swarm policy. Сервіс не отримує Docker secret напряму: DB/RabbitMQ credentials читаються з live `koha-conf.xml`, який патчиться bootstrap-модулями. Якщо task падає з `library-koha does not exist`, перевірити `KOHA_INSTANCE_UID`/`KOHA_INSTANCE_GID` і актуальність `docker-compose.yml`/`docker-compose.swarm.yml` у deploy.
 
 ### External Tunnel / Traefik routing issues
 

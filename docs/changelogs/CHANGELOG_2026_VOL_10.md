@@ -116,3 +116,34 @@
 
 - Перевірено: `bash -n`, ShellCheck, Compose/Swarm rendering, `git diff --check`.
   Runtime deploy, purge binlog і restore не виконувалися.
+
+### 9) Background STOMP consumer recovery: RabbitMQ keepalive та коротший watchdog
+
+- Контекст (2026-10-05):
+  - RabbitMQ STOMP listener не мав увімкненого TCP keepalive; причинний зв'язок із конкретними зависаннями ще не підтверджений;
+  - watchdog-и опитували consumer кожні 30 секунд із grace period 90 секунд, а індексатор міг зависнути під час необмеженого очікування daemon після `TERM`.
+
+- Зміни:
+  - додано `rabbitmq/rabbitmq.conf` із `stomp.tcp_listen_options.keepalive = true`; config версіонується та підключається до RabbitMQ у Compose/Swarm;
+  - тільки RabbitMQ service отримує sysctl `tcp_keepalive_time=30`, `tcp_keepalive_intvl=10`, `tcp_keepalive_probes=4`;
+  - watchdog defaults індексатора і worker supervisor змінено на poll `10s` / grace `30s`; оновлено `.env.example`, encrypted `env.dev.enc` та `env.prod.enc`;
+  - зовнішній `timeout 7` обмежує повний час RabbitMQ Management API probe індексатора й workers;
+  - індексатор запускає Perl daemon напряму через `setpriv`; спільний process-control helper надсилає `TERM`, чекає до 10 секунд, потім надсилає `KILL` і повертає помилку;
+  - додано behavior checks для consumer stable/recovery/failure transitions та daemon, що ігнорує `TERM`.
+
+- Перевірено:
+  - `bash -n`, ShellCheck (`--severity=warning`), `bash scripts/verify-env.sh --example-only`;
+  - усі `tests/*.sh` пройшли, включно з новими watchdog/process checks;
+  - Compose і Swarm manifests відрендерено; перевірено config mounts, RabbitMQ sysctls і значення watchdog `10/30` у rendered Swarm manifest;
+  - зашифровані dev/prod env розшифровано лише у тимчасовий каталог із правами `0700/0600`, перевірено нові параметри та незмінність решти значень без їхнього виводу;
+  - SOPS encryption validator і далі відхиляє наявне порожнє plaintext поле `KOHA_OPAC_PREFIX=`; воно також є у `HEAD` до цієї зміни.
+
+- Runtime acceptance:
+  - після dev redeploy служби RabbitMQ, індексатора та обох worker supervisors запущені `1/1`;
+  - live RabbitMQ config повертає `stomp.tcp_listen_options.keepalive = true`, а sysctl контейнера RabbitMQ — `30/10/4`;
+  - live env індексатора і supervisors має watchdog `10/30`; startup timeout збережено `300s`, worker drain — `300s` для `default` і `1800s` для `long_tasks`;
+  - черги `elastic_index`, `default`, `long_tasks` мають по одному consumer і `0` ready/unacked повідомлень;
+  - контрольовано закрито RabbitMQ-side TCP connections кожного з трьох consumers: кожен consumer повернувся рівно до одного, без зміни task; це перевіряє reconnect після явного broker close, але не silent TCP blackhole/keepalive detection;
+  - однозаписний синтетичний MARCXML імпортовано в Koha та підтверджено документ Elasticsearch HTTP `200`; тестовий запис і документ прибрано;
+  - тривалий активний `long_tasks` job і відтворення TCP blackhole не перевірені. Для першого потрібен більший синтетичний/анонімізований MARCXML; для другого — ізольований fault injection із мережевими правами, недоступними поточному runtime користувачу;
+  - production deploy не виконувався. Перед RabbitMQ restart потрібно зупинити створення jobs, дочекатися активних jobs і перевірити порожні черги; постійного RabbitMQ data volume немає.

@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-09-23
+Дата оновлення: 2026-10-05
 
 ## 1) Призначення репозиторію
 
@@ -58,11 +58,13 @@
    - Elasticsearch TCP availability;
    - RabbitMQ STOMP availability через TCP pre-flight і Koha-level `Koha::BackgroundJob->connect`.
 4. Після readiness-перевірок supervisor закриває stale RabbitMQ connections, що вже споживають
-   `elastic_index`, запускає `es_indexer_daemon.pl` і контролює рівно один RabbitMQ consumer.
-5. Модель recovery — crash-only: якщо Perl daemon завершується або consumer відсутній довше grace period,
-   завершується контейнер, а restart виконує Compose/Swarm policy.
+   `elastic_index`, запускає `es_indexer_daemon.pl` через `setpriv` і контролює рівно один RabbitMQ consumer.
+   RabbitMQ Management API probe має зовнішній timeout 7 секунд.
+5. Модель recovery — crash-only: watchdog опитує кожні 10 секунд і завершує контейнер, якщо consumer
+   відсутній щонайменше 30 секунд; restart виконує Compose/Swarm policy. При зупинці daemon отримує `TERM`,
+   після 10 секунд примусово `KILL`, а контейнер завершується з помилкою.
 6. Перевірки через `ss` не використовуються, щоб не створювати orphan child processes.
-7. Очікуваний runtime стан: один running Swarm task, один `runuser`, один `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
+7. Очікуваний runtime стан: один running Swarm task, один `setpriv`-керований `es_indexer_daemon.pl`, один RabbitMQ consumer на `koha_library-elastic_index`.
 8. Swarm limits для сервісу задаються через `deploy.resources.limits`: memory `512m` за замовчуванням і CPU `0.50` за замовчуванням.
 
 ## 4.1) Background jobs model
@@ -74,17 +76,19 @@
    `replicas: 1`, `MAX_PROCESSES=1`, update/rollback `stop-first` і `restart_policy.condition: any`.
 4. Worker pre-flight перевіряє live config, instance user, SQL, RabbitMQ TCP і
    `Koha::BackgroundJob->connect`; startup завершується з помилкою, якщо `JobsNotificationMethod` не `STOMP`.
-5. Foreground supervisor контролює exact queue `${memcached_namespace}-<queue>` через RabbitMQ Management API.
-   Перед стартом він закриває stale RabbitMQ connections, що вже споживають його queue; для `stop-first`
-   singleton service це єдиний безпечний спосіб прибрати залишені STOMP subscriptions після ротації task.
-   Якщо consumer не дорівнює одному протягом 90 секунд, supervisor швидко завершує тільки worker task. Протягом
-   цього grace period healthcheck лишається healthy, щоб Swarm не запустив normal drain до контрольованого abort.
-   При штатному stop parent worker призупиняється, активному job надається queue-specific drain timeout
-   (default 300 s, long_tasks 1800 s).
+5. Foreground supervisor контролює queue `${memcached_namespace}-<queue>` через RabbitMQ Management API;
+   запит має зовнішній timeout 7 секунд. Перед стартом він закриває stale RabbitMQ connections, що вже
+   споживають його queue; для `stop-first` singleton service це прибирає залишені STOMP subscriptions після
+   ротації task. Watchdog опитує кожні 10 секунд і завершує task, якщо consumer відсутній щонайменше
+   30 секунд. Протягом grace period healthcheck лишається healthy, щоб Swarm не запускав normal drain до
+   контрольованого abort. При штатному stop parent worker призупиняється; активному job надається
+   queue-specific drain timeout (default 300 s, long_tasks 1800 s).
 6. Web updates застосовуються `start-first` з rollback, workers — `stop-first`, щоб не створювати два consumers
    однієї черги. Перший migration deploy виконується у дві фази: web без embedded workers, потім workers.
-7. RabbitMQ TCP keepalive і persistence не входять у цей change: поточний Koha `Net::Stomp` не вмикає
-   `SO_KEEPALIVE`, тому container sysctl сам по собі не дає потрібного ефекту.
+7. RabbitMQ STOMP listener має `stomp.tcp_listen_options.keepalive = true`; лише RabbitMQ контейнер
+   отримує sysctl `tcp_keepalive_time=30`, `tcp_keepalive_intvl=10`, `tcp_keepalive_probes=4`. Це дає
+   виявлення недоступного idle peer приблизно за 70 секунд. Значення runtime watchdog лишаються незалежною
+   перевіркою RabbitMQ consumer; TCP keepalive не виявляє завислий Perl процес за живого TCP-з'єднання.
 
 ## 5) Конфігураційна модель
 
@@ -202,7 +206,12 @@ koha-deploy/
   env.prod.enc
   apache/
     remoteip.conf
+  rabbitmq/
+    rabbitmq.conf
   scripts/
+    container/
+      koha-background-worker-supervisor.sh
+      koha-es-indexer-process.sh
     backup.sh
     restore.sh
     verify-env.sh

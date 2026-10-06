@@ -174,8 +174,8 @@ services:
       MB_USER: ${RABBITMQ_USER}
       MB_PASS: ${RABBITMQ_PASS}
       KOHA_WORKER_WAIT_TIMEOUT: ${KOHA_WORKER_WAIT_TIMEOUT:-300}
-      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-30}
-      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_WORKER_MONITOR_INTERVAL: ${KOHA_WORKER_MONITOR_INTERVAL:-10}
+      KOHA_WORKER_CONSUMER_GRACE_SECONDS: ${KOHA_WORKER_CONSUMER_GRACE_SECONDS:-30}
       KOHA_WORKER_STALE_CONSUMER_CLEANUP: ${KOHA_WORKER_STALE_CONSUMER_CLEANUP:-true}
       KOHA_WORKER_DRAIN_TIMEOUT: ${KOHA_WORKER_DEFAULT_DRAIN_TIMEOUT:-300}
       KOHA_WORKER_QUEUE: default
@@ -215,6 +215,10 @@ services:
 
   koha-es-indexer:
     image: ${KOHA_IMAGE}
+    configs:
+      - source: koha_es_indexer_process
+        target: /usr/local/sbin/koha-es-indexer-process
+        mode: 0555
     command:
       - /bin/bash
       - -lc
@@ -228,6 +232,7 @@ services:
 
         export KOHA_HOME="/usr/share/koha"
         export PERL5LIB="/usr/share/koha/lib"
+        source /usr/local/sbin/koha-es-indexer-process
 
         if ! getent group "$$KOHA_INSTANCE-koha" >/dev/null; then
           groupadd --gid "$$KOHA_INSTANCE_GID" "$$KOHA_INSTANCE-koha"
@@ -316,7 +321,7 @@ services:
         fi
 
         rabbitmq_elastic_consumers() {
-          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+          timeout 7 runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
             perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MC4::Context -e '
               sub xml_value {
                 my ($$doc, $$name) = @_;
@@ -351,7 +356,7 @@ services:
         }
 
         rabbitmq_close_stale_elastic_consumers() {
-          runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+          timeout 7 runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
             perl -I/usr/share/koha/lib -MHTTP::Tiny -MXML::LibXML -MMIME::Base64=encode_base64 -MJSON::PP=decode_json -MC4::Context -e '
               sub xml_value {
                 my ($$doc, $$name) = @_;
@@ -392,8 +397,8 @@ services:
           [ "$$(rabbitmq_elastic_consumers)" = "0" ]
         }
 
-        monitor_interval="$${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}"
-        consumer_grace="$${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}"
+        monitor_interval="$${KOHA_ES_INDEXER_MONITOR_INTERVAL:-10}"
+        consumer_grace="$${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-30}"
         stale_consumer_cleanup="$${KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP:-true}"
         if ! [[ "$$monitor_interval" =~ ^[0-9]+$$ ]] || [ "$$monitor_interval" -lt 1 ]; then
           echo "ERROR: KOHA_ES_INDEXER_MONITOR_INTERVAL must be a positive integer" >&2
@@ -413,18 +418,12 @@ services:
           wait_until "stale RabbitMQ elastic_index consumer cleanup" rabbitmq_elastic_queue_has_no_consumers
         fi
 
-        runuser --preserve-environment -u "$$KOHA_INSTANCE-koha" -- \
+        setpriv --reuid "$$KOHA_INSTANCE_UID" --regid "$$KOHA_INSTANCE_GID" --init-groups \
           /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
           --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE" &
         indexer_pid="$$!"
 
-        stop_indexer() {
-          if kill -0 "$$indexer_pid" 2>/dev/null; then
-            kill "$$indexer_pid" 2>/dev/null || true
-            wait "$$indexer_pid" 2>/dev/null || true
-          fi
-        }
-        trap 'stop_indexer; exit 143' TERM INT
+        trap 'if stop_indexer "$$indexer_pid"; then exit 143; else exit 1; fi' TERM INT
 
         if [ "$$(jobs_notification_method)" != "STOMP" ]; then
           wait "$$indexer_pid"
@@ -432,7 +431,7 @@ services:
         fi
 
         consumer_missing_since=""
-        while kill -0 "$$indexer_pid" 2>/dev/null; do
+        while indexer_is_running "$$indexer_pid"; do
           consumers="$$(rabbitmq_elastic_consumers || printf '0')"
           if [ "$$consumers" -eq 1 ]; then
             consumer_missing_since=""
@@ -442,7 +441,7 @@ services:
               echo "WARNING: koha-es-indexer RabbitMQ consumer ownership mismatch (consumers=$$consumers)"
             elif [ "$$((SECONDS - consumer_missing_since))" -ge "$$consumer_grace" ]; then
               echo "ERROR: koha-es-indexer RabbitMQ consumer ownership mismatch for >=$${consumer_grace}s; exiting for Swarm restart" >&2
-              stop_indexer
+              stop_indexer "$$indexer_pid" || true
               exit 1
             fi
           fi
@@ -497,8 +496,8 @@ services:
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
       KOHA_ES_INDEXER_BATCH_SIZE: ${KOHA_ES_INDEXER_BATCH_SIZE:-10}
       KOHA_ES_INDEXER_WAIT_TIMEOUT: ${KOHA_ES_INDEXER_WAIT_TIMEOUT:-300}
-      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-30}
-      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-90}
+      KOHA_ES_INDEXER_MONITOR_INTERVAL: ${KOHA_ES_INDEXER_MONITOR_INTERVAL:-10}
+      KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS: ${KOHA_ES_INDEXER_CONSUMER_GRACE_SECONDS:-30}
       KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP: ${KOHA_ES_INDEXER_STALE_CONSUMER_CLEANUP:-true}
     depends_on:
       db:
@@ -581,6 +580,14 @@ services:
     cpus: ${RABBITMQ_CPUS:-1.00}
     networks:
       - kohanet
+    sysctls:
+      net.ipv4.tcp_keepalive_time: "30"
+      net.ipv4.tcp_keepalive_intvl: "10"
+      net.ipv4.tcp_keepalive_probes: "4"
+    configs:
+      - source: rabbitmq_runtime_config
+        target: /etc/rabbitmq/rabbitmq.conf
+        mode: 0444
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
@@ -679,3 +686,7 @@ configs:
     file: ./scripts/container/koha-worker-autostart-guard.sh
   koha_background_worker_supervisor:
     file: ./scripts/container/koha-background-worker-supervisor.sh
+  rabbitmq_runtime_config:
+    file: ./rabbitmq/rabbitmq.conf
+  koha_es_indexer_process:
+    file: ./scripts/container/koha-es-indexer-process.sh
