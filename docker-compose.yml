@@ -58,6 +58,7 @@ services:
     networks:
       - kohanet
       - proxy-net
+      - smtp2graph_internal_enc
     deploy:
       labels:
         - "traefik.enable=true"
@@ -680,6 +681,8 @@ networks:
   proxy-net:
     external: true
     name: ${EXTERNAL_NETWORK}
+  smtp2graph_internal_enc:
+    external: true
 
 configs:
   koha_worker_autostart_guard:
