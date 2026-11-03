@@ -6,6 +6,8 @@ services:
       - -lc
       - |
         set -eu
+        sed -i 's/\r$$//' /etc/cron.d/koha
+        install -d -m 0755 -o "$${KOHA_INSTANCE_UID:-1000}" -g "$${KOHA_INSTANCE_GID:-1000}" "/var/lock/koha/$${KOHA_INSTANCE}"
         case "$${KOHA_BACKGROUND_WORKERS_AUTOSTART:-false}" in
           true|false) ;;
           *) echo "ERROR: KOHA_BACKGROUND_WORKERS_AUTOSTART must be true or false" >&2; exit 64 ;;
@@ -84,6 +86,8 @@ services:
       DB_ROOT_PASS: ${DB_ROOT_PASS}
 
       KOHA_INSTANCE: ${KOHA_INSTANCE}
+      KOHA_INSTANCE_UID: ${KOHA_INSTANCE_UID:-1000}
+      KOHA_INSTANCE_GID: ${KOHA_INSTANCE_GID:-1000}
       KOHA_DOMAIN: ${KOHA_DOMAIN}
       KOHA_CONF: /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
       KOHA_OPAC_PORT: ${KOHA_OPAC_PORT}

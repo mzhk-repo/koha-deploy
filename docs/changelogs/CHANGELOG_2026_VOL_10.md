@@ -153,3 +153,15 @@
 - Changed `KOHA_IDP_DEFAULT_LIBRARY_ID` in the encrypted production configuration from `CPL` to `LDUBGD`, an existing production library.
 - The production identity provider domain was absent; the next deploy must recreate it through the identity-provider bootstrap. No deploy or database changes were performed.
 - Verified SOPS decryption and confirmed that this is the only changed plaintext configuration value.
+
+### 11) Koha email queue startup prerequisites
+
+- Normalize the image cron file to LF and create the instance lock directory with the configured Koha UID and GID before startup in Compose and Swarm.
+- In production, enabled email for `library`, corrected the live cron file and lock directory, and changed `KohaAdminEmailAddress` from `root@localhost` to `noreply@ldubgd.edu.ua`.
+- The queued WELCOME message reached SMTP before the sender correction and was rejected as `root@localhost`; it is now failed and was not retried. Delivery after the sender correction remains unverified.
+
+### 12) Configure the Koha sender through env
+
+- Added `KOHA_ADMIN_EMAIL_ADDRESS` to the env contract and set it in the encrypted dev and production configurations.
+- The SMTP bootstrap validates the address, applies and verifies `KohaAdminEmailAddress`, and flushes the Koha cache. If the variable is absent, the existing preference is preserved.
+- Checked shell syntax, ShellCheck, SOPS decryption and changed configuration keys; runtime bootstrap and delivery remain unverified.

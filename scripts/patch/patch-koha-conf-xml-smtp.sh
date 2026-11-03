@@ -35,6 +35,11 @@ PATCH_SMTP_SSL_MODE="${SMTP_SSL_MODE:-disabled}"
 PATCH_SMTP_USER="${SMTP_USER_NAME:-}"
 PATCH_SMTP_PASS="${SMTP_PASSWORD:-}"
 PATCH_SMTP_DEBUG="${SMTP_DEBUG:-0}"
+ADMIN_EMAIL="${KOHA_ADMIN_EMAIL_ADDRESS:-}"
+
+if [ -n "${ADMIN_EMAIL}" ]; then
+  [[ "${ADMIN_EMAIL}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || die "KOHA_ADMIN_EMAIL_ADDRESS must be a valid email address"
+fi
 
 [[ "${PATCH_SMTP_PORT}" =~ ^[0-9]+$ ]] || die "SMTP_PORT must be numeric"
 [[ "${PATCH_SMTP_TIMEOUT}" =~ ^[0-9]+$ ]] || die "SMTP_TIMEOUT must be numeric"
@@ -84,6 +89,15 @@ if ! ${DRY_RUN}; then
   grep -q "<host>${PATCH_SMTP_HOST}</host>" "${KOHA_CONF_FILE}" || die "smtp host verify failed"
   grep -q "<port>${PATCH_SMTP_PORT}</port>" "${KOHA_CONF_FILE}" || die "smtp port verify failed"
   grep -q "<ssl_mode>${PATCH_SMTP_SSL_MODE}</ssl_mode>" "${KOHA_CONF_FILE}" || die "smtp ssl_mode verify failed"
+  if [ -n "${ADMIN_EMAIL}" ]; then
+    docker_runtime_exec koha koha-mysql "${KOHA_INSTANCE:-library}" -e \
+      "UPDATE systempreferences SET value='${ADMIN_EMAIL}' WHERE variable='KohaAdminEmailAddress';"
+    actual_email="$(docker_runtime_exec koha koha-mysql "${KOHA_INSTANCE:-library}" -N -B -e \
+      "SELECT value FROM systempreferences WHERE variable='KohaAdminEmailAddress';")"
+    [ "${actual_email}" = "${ADMIN_EMAIL}" ] || die "KohaAdminEmailAddress verification failed"
+    docker_runtime_exec koha koha-shell "${KOHA_INSTANCE:-library}" -c \
+      'perl -MKoha::Caches -e "Koha::Caches->get_instance->flush_all"'
+  fi
 fi
 
 log "Done: smtp_server"
