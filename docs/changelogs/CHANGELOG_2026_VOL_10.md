@@ -147,3 +147,9 @@
   - однозаписний синтетичний MARCXML імпортовано в Koha та підтверджено документ Elasticsearch HTTP `200`; тестовий запис і документ прибрано;
   - тривалий активний `long_tasks` job і відтворення TCP blackhole не перевірені. Для першого потрібен більший синтетичний/анонімізований MARCXML; для другого — ізольований fault injection із мережевими правами, недоступними поточному runtime користувачу;
   - production deploy не виконувався. Перед RabbitMQ restart потрібно зупинити створення jobs, дочекатися активних jobs і перевірити порожні черги; постійного RabbitMQ data volume немає.
+
+### 10) Production OIDC default library
+
+- Changed `KOHA_IDP_DEFAULT_LIBRARY_ID` in the encrypted production configuration from `CPL` to `LDUBGD`, an existing production library.
+- The production identity provider domain was absent; the next deploy must recreate it through the identity-provider bootstrap. No deploy or database changes were performed.
+- Verified SOPS decryption and confirmed that this is the only changed plaintext configuration value.
