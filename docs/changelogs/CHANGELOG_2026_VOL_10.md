@@ -224,3 +224,16 @@
   config rendering and Compose configuration. An isolated RabbitMQ 4.4 test
   verified individual ACK, requeue, redelivery headers and disconnect recovery.
   A live Elasticsearch outage has not been tested; no deployment was performed.
+
+### 17) Preserve RabbitMQ 4.4 on deploy
+
+- Compose and Swarm use the same `RABBITMQ_IMAGE` reference, with the example
+  set to the RabbitMQ 4.4.0 image containing the STOMP Management API fix.
+  The default Swarm build includes RabbitMQ.
+- Removed the obsolete RabbitMQ version and Swarm image parameters from the
+  env template; runtime environment files require an operator update.
+- Enabled STOMP plugins in the derived image for standalone Compose and updated
+  the architecture and runbook.
+- Verification: env template validation, shell syntax and ShellCheck, Compose
+  and Swarm image rendering, and
+  `git diff --check`. Image build and deployment were not performed.

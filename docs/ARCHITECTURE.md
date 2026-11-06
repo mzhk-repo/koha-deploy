@@ -19,7 +19,7 @@
 4. `koha-es-indexer` (окремий crash-only daemon для Elasticsearch indexing)
 5. `db` (`mariadb:11`)
 6. `es` (локальна збірка з `elasticsearch/Dockerfile`)
-7. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`, STOMP enabled)
+7. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile.4.4-stomp-fix`, STOMP enabled)
 8. `memcached` (локальна збірка з `memcached/Dockerfile`)
 
 Зовнішній доступ:
@@ -96,8 +96,9 @@ the recovery patch must be reviewed for each changed upstream daemon.
    перевіркою RabbitMQ consumer; TCP keepalive не виявляє завислий Perl процес за живого TCP-з'єднання.
 8. Для RabbitMQ 4.4.0 підготовлено окремий derived image з виправленням Management API:
    native STOMP connection зберігає процес у полі `connection`, тоді як стандартний DELETE
-   шукає `pid`. Образ збирається з `rabbitmq/Dockerfile.4.4-stomp-fix`; його можна явно
-   вибрати через `RABBITMQ_SWARM_IMAGE`. Існуючий default образ не змінений.
+   шукає `pid`. Compose і Swarm використовують образ із `RABBITMQ_IMAGE`;
+   оркестратор за замовчуванням збирає його з `rabbitmq/Dockerfile.4.4-stomp-fix`
+   до deploy. Образ має бути доступний на вузлі, де запускається RabbitMQ.
 
 ## 5) Конфігураційна модель
 

@@ -282,7 +282,7 @@ print_swarm_service_diagnostics() {
 
 build_swarm_local_images() {
   local compose_file="$1"
-  local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es}"
+  local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es rabbitmq}"
   local services=()
   local service before_image_id after_image_id
 
@@ -373,7 +373,7 @@ swarm_service_needs_reconcile() {
 }
 
 force_swarm_service_reconcile() {
-  local reconcile_candidates="${ORCHESTRATOR_SWARM_RECONCILE_CANDIDATES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es} koha}"
+  local reconcile_candidates="${ORCHESTRATOR_SWARM_RECONCILE_CANDIDATES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es rabbitmq} koha}"
   local service_list=("${RECONCILE_CHANGED_SERVICES[@]:-}")
   local service service_name
 

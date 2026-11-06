@@ -574,10 +574,8 @@ services:
   rabbitmq:
     build:
       context: ./rabbitmq
-      dockerfile: Dockerfile
-      args:
-        RABBITMQ_VERSION: ${RABBITMQ_VERSION:-3-management}
-    image: ${RABBITMQ_IMAGE:-koha-local-rabbitmq:3-management}
+      dockerfile: Dockerfile.4.4-stomp-fix
+    image: ${RABBITMQ_IMAGE:?RABBITMQ_IMAGE is required}
     restart: unless-stopped
     logging:
       driver: json-file

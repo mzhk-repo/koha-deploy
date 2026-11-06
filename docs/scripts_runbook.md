@@ -75,11 +75,11 @@ credentials. It uses the supplied Koha image as a STOMP client, checks all three
 queue names, closes their consumers through the Management API, and checks a
 replacement consumer can process a message. It does not run a full Koha job.
 
-To select a published image, set `RABBITMQ_SWARM_IMAGE` to its full, preferably
-digest-pinned, reference in the target environment. When unset or empty, Swarm
-continues to use `docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}`. A local
-image tag is usable only on nodes where that exact image exists; publish and pin
-the image for reproducible deployment. Before changing a live broker, stop job
+Set `RABBITMQ_IMAGE=koha-rabbitmq-stomp-fix:4.4.0` in the target runtime env.
+Compose and Swarm use this same image reference. The deploy orchestrator
+builds it locally by default; if `ORCHESTRATOR_SWARM_BUILD_SERVICES` is overridden,
+include `rabbitmq` or ensure the exact image is available on the RabbitMQ node.
+Before changing a live broker, stop job
 producers, drain actual running jobs, and verify that its queues are empty. Koha
 acknowledges a job before the child process finishes, so zero unacknowledged
 messages alone does not establish that all jobs have finished.
