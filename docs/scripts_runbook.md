@@ -51,6 +51,49 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 ## Категорія 1б: deploy-adjacent
 
+### `scripts/koha-upgrade-schema-swarm.sh`
+
+Use this procedure when deploying a newer Koha image to an **existing** database.
+It must run on a Swarm manager with Docker and SOPS access. The database and all
+active Koha service tasks must be on that manager; the script stops if a Koha
+task is active on another node. An empty database must be initialized with the
+Koha installer or restored.
+
+1. Make sure `env.dev.enc` contains the intended new `KOHA_IMAGE`, and that the
+   image is available to Docker. Stop external systems from submitting Koha jobs
+   and ensure no other deploy or schema upgrade runs at the same time.
+2. From the repository directory, run:
+
+   ```bash
+   cd /opt/Koha/koha-deploy
+   bash scripts/koha-upgrade-schema-swarm.sh --env dev
+   ```
+
+3. If the script reports `Schema upgrade verified`, run the normal dev deploy.
+   The web service, workers and indexer stay stopped until that deploy starts them.
+   If it reports `Schema is current`, nothing was stopped and the normal deploy
+   can proceed. The script checks all RabbitMQ queues for unacknowledged jobs;
+   it waits up to 30 minutes for active jobs and up to another 1,900 seconds for
+   workers to stop. Stop external job producers for the whole operation.
+4. If the script fails, read the error before taking further action. Services
+   already stopped are not restarted automatically. If the upgrade started but
+   failed or verification failed, the Swarm config `koha-schema-upgrade-lock`
+   remains as a guard. Investigate the database and migration output before
+   removing that lock or retrying; the schema could be partially upgraded.
+
+The script uses the image and instance from the selected encrypted environment,
+checks the existing schema, refuses a downgrade, and uses Koha's own
+`koha-upgrade-schema`. It does not create or require a backup. A backup is
+recommended: restoring an older image does not reverse a schema migration, and
+without a backup lost data may be unrecoverable. Production execution requires
+explicit approval; use `--env prod` only after that approval.
+
+For an explicitly authorized deploy, the upgrade can also run immediately before
+the stack update by adding `ORCHESTRATOR_SCHEMA_UPGRADE=true` to the existing
+Swarm orchestrator command below. It is disabled by default. Do not run the
+standalone script concurrently with deploy: its lock only excludes another
+invocation of the schema upgrade script.
+
 ### `scripts/deploy-orchestrator-swarm.sh`
 
 #### Бізнес-логіка

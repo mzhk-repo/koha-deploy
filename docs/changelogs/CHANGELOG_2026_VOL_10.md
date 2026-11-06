@@ -165,3 +165,19 @@
 - Added `KOHA_ADMIN_EMAIL_ADDRESS` to the env contract and set it in the encrypted dev and production configurations.
 - The SMTP bootstrap validates the address, applies and verifies `KohaAdminEmailAddress`, and flushes the Koha cache. If the variable is absent, the existing preference is preserved.
 - Checked shell syntax, ShellCheck, SOPS decryption and changed configuration keys; runtime bootstrap and delivery remain unverified.
+
+### 13) Controlled Koha schema upgrade before Swarm deploy
+
+- Added `scripts/koha-upgrade-schema-swarm.sh` for existing databases with Koha
+  tasks on the local Swarm manager. It checks the configured target image and schema, refuses
+  downgrades, waits for active RabbitMQ messages, stops Koha services, runs
+  `koha-upgrade-schema`, and verifies the result. It does not require a backup.
+- The normal Swarm deploy can run this step with the explicit
+  `ORCHESTRATOR_SCHEMA_UPGRADE=true` flag; the default deploy remains unchanged.
+  A failed or unverifiable migration retains a Swarm lock and stopped services.
+- Documented the dev command, operational prerequisites and failure handling in
+  `docs/scripts_runbook.md`. Production execution requires explicit approval.
+- Verification: shell syntax, ShellCheck and mocked schema upgrade scenarios;
+  a temporary container using the target image and DB network read the dev
+  schema version and confirmed that Koha reports an update is needed.
+  No live schema upgrade or deploy was performed.

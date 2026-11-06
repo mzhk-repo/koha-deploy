@@ -102,6 +102,11 @@
    `07-db-import.sh` до `KOHA_SETUP_SKIP_STEPS`, незалежно від env; Swarm entrypoint повторно встановлює
    skip після завантаження `app_env_payload`. Перед будь-якими post-deploy syspref-змінами
    `koha-db-schema-guard.sh` вимагає непорожній `systempreferences.Version`.
+6. Оновлення наявної схеми для нового образу — окремий керований крок
+   `scripts/koha-upgrade-schema-swarm.sh`; його також можна явно ввімкнути перед
+   Swarm deploy через `ORCHESTRATOR_SCHEMA_UPGRADE=true`. DB та активні Koha tasks
+   мають бути на manager, з якого запускається скрипт. Скрипт
+   не створює backup і після помилки міграції залишає сервіси зупиненими.
 
 Актуальні модулі bootstrap:
 - `timezone`
