@@ -51,6 +51,39 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 ## Категорія 1б: deploy-adjacent
 
+### RabbitMQ 4.4.0: STOMP connection close compatibility
+
+The official 4.4.0 Management API can return HTTP 204 without closing a native
+STOMP connection because it expects `pid` while the connection record exposes
+`connection`. The patched module handles this case only for STOMP; the existing
+authorization and other connection handling remain in place. The vendored
+module is based on RabbitMQ `v4.4.0`'s `rabbit_mgmt_wm_connection.erl`
+(unmodified source SHA-256:
+`6747f52e77d0caf155b90233b4a48daac847ebec93ffd65b04c3e35d0d32f57d`).
+The image is pinned to the tested 4.4.0 base digest; review the patch against
+upstream before upgrading either version.
+
+Build the derived image on the manager and run the isolated compatibility test:
+
+```bash
+docker build -f rabbitmq/Dockerfile.4.4-stomp-fix -t koha-rabbitmq-stomp-fix:4.4.0 rabbitmq
+KOHA_TEST_IMAGE='<your Koha image reference>' bash tests/rabbitmq-44-stomp-close.integration.sh
+```
+
+The test starts a disposable broker with no external network and synthetic
+credentials. It uses the supplied Koha image as a STOMP client, checks all three
+queue names, closes their consumers through the Management API, and checks a
+replacement consumer can process a message. It does not run a full Koha job.
+
+To select a published image, set `RABBITMQ_SWARM_IMAGE` to its full, preferably
+digest-pinned, reference in the target environment. When unset or empty, Swarm
+continues to use `docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}`. A local
+image tag is usable only on nodes where that exact image exists; publish and pin
+the image for reproducible deployment. Before changing a live broker, stop job
+producers, drain actual running jobs, and verify that its queues are empty. Koha
+acknowledges a job before the child process finishes, so zero unacknowledged
+messages alone does not establish that all jobs have finished.
+
 ### `scripts/koha-upgrade-schema-swarm.sh`
 
 Use this procedure when deploying a newer Koha image to an **existing** database.

@@ -181,3 +181,16 @@
   a temporary container using the target image and DB network read the dev
   schema version and confirmed that Koha reports an update is needed.
   No live schema upgrade or deploy was performed.
+
+### 14) RabbitMQ 4.4 native STOMP connection cleanup
+
+- Prepared a derived RabbitMQ 4.4.0 Alpine image with a scoped Management API
+  fix: when the existing connection record has no `pid`, use its `connection`
+  process only if the protocol is STOMP. Existing API authorization and other
+  protocol handling remain intact.
+- Added optional `RABBITMQ_SWARM_IMAGE` to select a full image reference; when
+  omitted, the existing official RabbitMQ image selection is unchanged. The
+  derived image has not been published or deployed.
+- Added an isolated integration check for three STOMP queues, Management API
+  cleanup and replacement consumer delivery. Documented build and rollout
+  prerequisites; no live RabbitMQ data or services were modified.

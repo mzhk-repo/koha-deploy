@@ -89,6 +89,10 @@
    отримує sysctl `tcp_keepalive_time=30`, `tcp_keepalive_intvl=10`, `tcp_keepalive_probes=4`. Це дає
    виявлення недоступного idle peer приблизно за 70 секунд. Значення runtime watchdog лишаються незалежною
    перевіркою RabbitMQ consumer; TCP keepalive не виявляє завислий Perl процес за живого TCP-з'єднання.
+8. Для RabbitMQ 4.4.0 підготовлено окремий derived image з виправленням Management API:
+   native STOMP connection зберігає процес у полі `connection`, тоді як стандартний DELETE
+   шукає `pid`. Образ збирається з `rabbitmq/Dockerfile.4.4-stomp-fix`; його можна явно
+   вибрати через `RABBITMQ_SWARM_IMAGE`. Існуючий default образ не змінений.
 
 ## 5) Конфігураційна модель
 
