@@ -22,4 +22,5 @@ PATH="${tmp_dir}/bin:${PATH}" "${PROJECT_ROOT}/scripts/render-versioned-worker-c
 
 grep -Eq '^RABBITMQ_RUNTIME_CONFIG_NAME=rabbitmq_runtime_config_[a-f0-9]{12}$' "${tmp_dir}/write.env"
 grep -Eq '^KOHA_ES_INDEXER_PROCESS_CONFIG_NAME=koha_es_indexer_process_[a-f0-9]{12}$' "${tmp_dir}/write.env"
+grep -Eq '^KOHA_ES_INDEXER_RECOVERY_CONFIG_NAME=koha_es_indexer_recovery_[a-f0-9]{12}$' "${tmp_dir}/write.env"
 printf 'PASS: RabbitMQ and indexer Docker configs are versioned into runtime env\n'

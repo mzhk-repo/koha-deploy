@@ -47,6 +47,11 @@
 
 ## 4) Elasticsearch indexing model
 
+The deploy mounts a versioned recovery daemon for the known Koha 26.05.05
+indexer source hash. It retains STOMP messages until indexing finishes and
+requeues `NoNodes` jobs. Other source hashes use the image daemon with a warning;
+the recovery patch must be reviewed for each changed upstream daemon.
+
 1. `koha-es-indexer` це окремий довгоживучий Swarm service, а не background-процес всередині `koha`.
 2. Основний `koha` передає image-native `KOHA_ES_INDEXER_AUTOSTART=false`, що вимикає legacy
    `/usr/sbin/koha-es-indexer --start` і залишає черзі одного власника.

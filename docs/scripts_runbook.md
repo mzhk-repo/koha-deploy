@@ -498,3 +498,28 @@ bash scripts/bootstrap-live-configs.sh --module csp-report-only --dry-run
 
 shred -u "${ENV_TMP}" 2>/dev/null || rm -f "${ENV_TMP}"
 ```
+
+### Elasticsearch indexer recovery after an outage
+
+The indexer for the known Koha 26.05.05 daemon retains STOMP messages until
+indexing finishes. When Elasticsearch reports `NoNodes`, it resets the job to
+`new`, requeues the message and retries after five seconds with a fresh client.
+An interrupted `started` job is processed again when RabbitMQ marks its message
+as redelivered. Other indexing errors remain `failed` and require investigation.
+Existing failed jobs are not retried automatically.
+
+The versioned config is deployed with the normal Swarm deploy. At startup, the
+service checks the original daemon's SHA-256; if it differs, the original daemon
+runs and logs `Elasticsearch recovery patch is inactive`. Review the patch for
+that Koha version before relying on recovery. RabbitMQ has no persistent data
+volume in this stack, so replacing the broker can still lose queued messages.
+Before restarting RabbitMQ, stop new jobs and drain its queues.
+
+Check the indexer after deployment:
+
+```bash
+docker service logs --since 10m koha_koha-es-indexer 2>&1 | grep -E 'recovery patch is inactive|Elasticsearch unavailable|Update of elastic index failed'
+```
+
+No output means none of these messages appeared in the selected log interval;
+it does not prove that outage recovery has been exercised.

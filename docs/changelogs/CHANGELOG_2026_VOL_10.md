@@ -194,3 +194,33 @@
 - Added an isolated integration check for three STOMP queues, Management API
   cleanup and replacement consumer delivery. Documented build and rollout
   prerequisites; no live RabbitMQ data or services were modified.
+
+### 15) Dev Elasticsearch indexing recovery
+
+- Jobs 391 and 394 failed with `BadResponse` / `NoNodes` while their biblio
+  records 200 and 201 remained in MariaDB but were absent from Elasticsearch.
+  Elasticsearch later responded from the indexer container and reported green.
+- Reindexed only records 200 and 201 using Koha's `--bnumber` option; both
+  Elasticsearch document requests returned HTTP 200. Restarted only the dev
+  indexer service. Job 395 failed before the restart; control job 396 finished
+  after it. The three RabbitMQ queues had one consumer each and no messages.
+- Koha 26.05.05 wraps the original `NoNodes` exception as `BadResponse`, while
+  the daemon checks only the original exception type. Its STOMP path also ACKs
+  before committing a batch, so resetting jobs to `new` alone does not requeue
+  their messages. The original transport failure remains undetermined and this
+  runtime recovery does not provide a permanent fix.
+
+### 16) Elasticsearch indexing retry after `NoNodes`
+
+- Added a versioned copy of the Koha 26.05.05 indexer, selected only when the
+  image daemon has the known SHA-256. It recognizes wrapped `NoNodes`, retains
+  STOMP messages until the batch is processed, retries after an outage, and
+  accepts redelivered jobs left `started` by an interrupted consumer.
+- Versioned and mounted the daemon through the existing worker config renderer.
+  A different upstream daemon runs unchanged with a warning; broker replacement
+  can still lose queued messages because RabbitMQ has no persistent volume.
+- Verified repeated `NoNodes`, later success and permanent error handling using
+  mocked indexers in an isolated Koha container; checked Perl syntax, worker
+  config rendering and Compose configuration. An isolated RabbitMQ 4.4 test
+  verified individual ACK, requeue, redelivery headers and disconnect recovery.
+  A live Elasticsearch outage has not been tested; no deployment was performed.
