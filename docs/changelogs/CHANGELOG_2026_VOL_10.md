@@ -237,3 +237,35 @@
 - Verification: env template validation, shell syntax and ShellCheck, Compose
   and Swarm image rendering, and
   `git diff --check`. Image build and deployment were not performed.
+
+### 18) Dev Elasticsearch indexing queue recovery
+
+- The dev indexer repeatedly reported `NoNodes` while Elasticsearch responded
+  from its container and cluster health was green. Two messages remained
+  unacknowledged; a fresh Koha Elasticsearch client connected successfully.
+- Restarted only the dev indexer service. Both queued messages were redelivered,
+  jobs 402 and 405 finished, and the index queue returned to zero messages with
+  one consumer. The original cause of the repeated failures remains unknown;
+  the existing retry behavior did not recover without a process restart.
+
+### 19) Prevent persistent Elasticsearch `NoNodes` after headerless errors
+
+- Reproduced the failure with the deployed Koha libraries: a headerless error
+  changes the expected product header globally, so subsequent healthy responses
+  fail product validation and even a fresh client reports `NoNodes`. Restoring
+  the expected value immediately restores connectivity. The initial transport
+  event in the historical incident is not established.
+- The versioned recovery daemon scopes Koha's compatibility hook to each
+  response. Headerless-response compatibility and rejection of unknown products
+  remain intact for both biblio and authority clients.
+- Regression checks use the actual Koha libraries, error responses 599/503/401,
+  headerless success, unknown products, and repeated local HTTP outages followed
+  by recovery in the same process. The original hook fails the regression check;
+  the fix and existing job retry checks pass in isolated containers.
+- Deployed only the dev indexer using versioned Docker config
+  `koha_es_indexer_recovery_552c8f64369b`; the running file hash matches the
+  repository. Control job 406 finished and record 246 is present in Elasticsearch.
+  A separate client using the deployed fix reached real Elasticsearch after a
+  simulated headerless transport failure. All three queues are empty with one
+  consumer each; the service update completed. Syntax, config-versioning and diff
+  checks passed. No live Elasticsearch outage or production deployment was run.

@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-10-05
+Дата оновлення: 2026-11-06
 
 ## 1) Призначення репозиторію
 
@@ -51,6 +51,9 @@ The deploy mounts a versioned recovery daemon for the known Koha 26.05.05
 indexer source hash. It retains STOMP messages until indexing finishes and
 requeues `NoNodes` jobs. Other source hashes use the image daemon with a warning;
 the recovery patch must be reviewed for each changed upstream daemon.
+The recovery daemon also scopes Koha's Elasticsearch product-check compatibility
+hook to one response. A headerless transport error must not change the expected
+product header for subsequent responses or freshly created clients.
 
 1. `koha-es-indexer` це окремий довгоживучий Swarm service, а не background-процес всередині `koha`.
 2. Основний `koha` передає image-native `KOHA_ES_INDEXER_AUTOSTART=false`, що вимикає legacy

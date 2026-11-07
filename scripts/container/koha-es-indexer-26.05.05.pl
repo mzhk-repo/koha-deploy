@@ -109,6 +109,7 @@ if ($conn) {
 }
 my $biblio_indexer = Koha::SearchEngine::Indexer->new( { index => $Koha::SearchEngine::BIBLIOS_INDEX } );
 my $auth_indexer   = Koha::SearchEngine::Indexer->new( { index => $Koha::SearchEngine::AUTHORITIES_INDEX } );
+scope_product_check();
 my $config         = $biblio_indexer->get_elasticsearch_params;
 my $at_a_time      = $config->{chunk_size} // 5000;
 
@@ -337,4 +338,14 @@ sub is_no_nodes {
     return 1 if ref($error) eq 'Search::Elasticsearch::Error::NoNodes';
     return ref($error) eq 'Koha::Exceptions::Elasticsearch::BadResponse'
         && ( $error->type // '' ) eq 'NoNodes';
+}
+
+sub scope_product_check {
+    no warnings qw(redefine once);
+    my $process_response = \&Search::Elasticsearch::Role::Cxn::process_response;
+    *Search::Elasticsearch::Role::Cxn::process_response = sub {
+        # Koha's compatibility hook must not poison later responses after a missing header.
+        local $Search::Elasticsearch::Role::Cxn::PRODUCT_CHECK_VALUE = 'Elasticsearch';
+        return $process_response->(@_);
+    };
 }

@@ -508,6 +508,26 @@ An interrupted `started` job is processed again when RabbitMQ marks its message
 as redelivered. Other indexing errors remain `failed` and require investigation.
 Existing failed jobs are not retried automatically.
 
+Koha 26.05.05's compatibility hook changes the process-wide expected
+`x-elastic-product` value to an empty string after a response without that header,
+including transport failures. Later healthy Elasticsearch responses then fail
+product validation, and the pool reports `NoNodes` even with a fresh client.
+The recovery daemon limits this compatibility change to a single response,
+preserving headerless-response compatibility and rejection of unknown products.
+The original transport event behind a historical failure cannot be identified
+from `NoNodes` alone.
+
+The regression test uses the actual Koha libraries and an isolated local HTTP
+server; it checks repeated outages and recovery within the same process:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp \
+  -e PERL5LIB=/usr/share/koha/lib -v "$PWD:/work:ro" \
+  --entrypoint /usr/bin/perl "$KOHA_TEST_IMAGE" \
+  /work/tests/koha-es-product-check.test.pl \
+  /work/scripts/container/koha-es-indexer-26.05.05.pl
+```
+
 The versioned config is deployed with the normal Swarm deploy. At startup, the
 service checks the original daemon's SHA-256; if it differs, the original daemon
 runs and logs `Elasticsearch recovery patch is inactive`. Review the patch for
