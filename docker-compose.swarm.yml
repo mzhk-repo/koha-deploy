@@ -223,6 +223,9 @@ services:
       - source: koha_es_indexer_process
         target: /usr/local/sbin/koha-es-indexer-process
         mode: 0555
+      - source: koha_es_indexer_recovery
+        target: /usr/local/share/koha-es-indexer-recovery.pl
+        mode: 0444
     environment: !override
       MYSQL_SERVER: ${DB_HOST:-db}
       MYSQL_USER: ${DB_USER}
@@ -264,7 +267,7 @@ services:
     mem_limit: !reset null
     pids_limit: !reset null
     restart: !reset null
-    image: docker.io/rabbitmq:${RABBITMQ_VERSION:-3-management}
+    image: ${RABBITMQ_IMAGE:?RABBITMQ_IMAGE is required}
     entrypoint:
       - /bin/sh
       - -ec
@@ -358,6 +361,9 @@ secrets:
     name: ${RABBITMQ_PASSWORD_SECRET_NAME}
 
 configs:
+  koha_es_indexer_recovery: !override
+    external: true
+    name: ${KOHA_ES_INDEXER_RECOVERY_CONFIG_NAME}
   koha_es_indexer_process: !override
     external: true
     name: ${KOHA_ES_INDEXER_PROCESS_CONFIG_NAME}

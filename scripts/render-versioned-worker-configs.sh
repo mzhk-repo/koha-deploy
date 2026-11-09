@@ -81,6 +81,7 @@ register_config KOHA_WORKER_AUTOSTART_GUARD_CONFIG_NAME koha_worker_autostart_gu
 register_config KOHA_BACKGROUND_WORKER_SUPERVISOR_CONFIG_NAME koha_background_worker_supervisor "${PROJECT_ROOT}/scripts/container/koha-background-worker-supervisor.sh"
 register_config RABBITMQ_RUNTIME_CONFIG_NAME rabbitmq_runtime_config "${PROJECT_ROOT}/rabbitmq/rabbitmq.conf"
 register_config KOHA_ES_INDEXER_PROCESS_CONFIG_NAME koha_es_indexer_process "${PROJECT_ROOT}/scripts/container/koha-es-indexer-process.sh"
+register_config KOHA_ES_INDEXER_RECOVERY_CONFIG_NAME koha_es_indexer_recovery "${PROJECT_ROOT}/scripts/container/koha-es-indexer-26.05.05.pl"
 write_env
 
 for index in "${!CONFIG_KEYS[@]}"; do

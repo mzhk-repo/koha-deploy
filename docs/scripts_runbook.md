@@ -51,6 +51,82 @@ bash scripts/verify-env.sh --env-file .env --example-file .env.example
 
 ## Категорія 1б: deploy-adjacent
 
+### RabbitMQ 4.4.0: STOMP connection close compatibility
+
+The official 4.4.0 Management API can return HTTP 204 without closing a native
+STOMP connection because it expects `pid` while the connection record exposes
+`connection`. The patched module handles this case only for STOMP; the existing
+authorization and other connection handling remain in place. The vendored
+module is based on RabbitMQ `v4.4.0`'s `rabbit_mgmt_wm_connection.erl`
+(unmodified source SHA-256:
+`6747f52e77d0caf155b90233b4a48daac847ebec93ffd65b04c3e35d0d32f57d`).
+The image is pinned to the tested 4.4.0 base digest; review the patch against
+upstream before upgrading either version.
+
+Build the derived image on the manager and run the isolated compatibility test:
+
+```bash
+docker build -f rabbitmq/Dockerfile.4.4-stomp-fix -t koha-rabbitmq-stomp-fix:4.4.0 rabbitmq
+KOHA_TEST_IMAGE='<your Koha image reference>' bash tests/rabbitmq-44-stomp-close.integration.sh
+```
+
+The test starts a disposable broker with no external network and synthetic
+credentials. It uses the supplied Koha image as a STOMP client, checks all three
+queue names, closes their consumers through the Management API, and checks a
+replacement consumer can process a message. It does not run a full Koha job.
+
+Set `RABBITMQ_IMAGE=koha-rabbitmq-stomp-fix:4.4.0` in the target runtime env.
+Compose and Swarm use this same image reference. The deploy orchestrator
+builds it locally by default; if `ORCHESTRATOR_SWARM_BUILD_SERVICES` is overridden,
+include `rabbitmq` or ensure the exact image is available on the RabbitMQ node.
+Before changing a live broker, stop job
+producers, drain actual running jobs, and verify that its queues are empty. Koha
+acknowledges a job before the child process finishes, so zero unacknowledged
+messages alone does not establish that all jobs have finished.
+
+### `scripts/koha-upgrade-schema-swarm.sh`
+
+Use this procedure when deploying a newer Koha image to an **existing** database.
+It must run on a Swarm manager with Docker and SOPS access. The database and all
+active Koha service tasks must be on that manager; the script stops if a Koha
+task is active on another node. An empty database must be initialized with the
+Koha installer or restored.
+
+1. Make sure `env.dev.enc` contains the intended new `KOHA_IMAGE`, and that the
+   image is available to Docker. Stop external systems from submitting Koha jobs
+   and ensure no other deploy or schema upgrade runs at the same time.
+2. From the repository directory, run:
+
+   ```bash
+   cd /opt/Koha/koha-deploy
+   bash scripts/koha-upgrade-schema-swarm.sh --env dev
+   ```
+
+3. If the script reports `Schema upgrade verified`, run the normal dev deploy.
+   The web service, workers and indexer stay stopped until that deploy starts them.
+   If it reports `Schema is current`, nothing was stopped and the normal deploy
+   can proceed. The script checks all RabbitMQ queues for unacknowledged jobs;
+   it waits up to 30 minutes for active jobs and up to another 1,900 seconds for
+   workers to stop. Stop external job producers for the whole operation.
+4. If the script fails, read the error before taking further action. Services
+   already stopped are not restarted automatically. If the upgrade started but
+   failed or verification failed, the Swarm config `koha-schema-upgrade-lock`
+   remains as a guard. Investigate the database and migration output before
+   removing that lock or retrying; the schema could be partially upgraded.
+
+The script uses the image and instance from the selected encrypted environment,
+checks the existing schema, refuses a downgrade, and uses Koha's own
+`koha-upgrade-schema`. It does not create or require a backup. A backup is
+recommended: restoring an older image does not reverse a schema migration, and
+without a backup lost data may be unrecoverable. Production execution requires
+explicit approval; use `--env prod` only after that approval.
+
+For an explicitly authorized deploy, the upgrade can also run immediately before
+the stack update by adding `ORCHESTRATOR_SCHEMA_UPGRADE=true` to the existing
+Swarm orchestrator command below. It is disabled by default. Do not run the
+standalone script concurrently with deploy: its lock only excludes another
+invocation of the schema upgrade script.
+
 ### `scripts/deploy-orchestrator-swarm.sh`
 
 #### Бізнес-логіка
@@ -422,3 +498,48 @@ bash scripts/bootstrap-live-configs.sh --module csp-report-only --dry-run
 
 shred -u "${ENV_TMP}" 2>/dev/null || rm -f "${ENV_TMP}"
 ```
+
+### Elasticsearch indexer recovery after an outage
+
+The indexer for the known Koha 26.05.05 daemon retains STOMP messages until
+indexing finishes. When Elasticsearch reports `NoNodes`, it resets the job to
+`new`, requeues the message and retries after five seconds with a fresh client.
+An interrupted `started` job is processed again when RabbitMQ marks its message
+as redelivered. Other indexing errors remain `failed` and require investigation.
+Existing failed jobs are not retried automatically.
+
+Koha 26.05.05's compatibility hook changes the process-wide expected
+`x-elastic-product` value to an empty string after a response without that header,
+including transport failures. Later healthy Elasticsearch responses then fail
+product validation, and the pool reports `NoNodes` even with a fresh client.
+The recovery daemon limits this compatibility change to a single response,
+preserving headerless-response compatibility and rejection of unknown products.
+The original transport event behind a historical failure cannot be identified
+from `NoNodes` alone.
+
+The regression test uses the actual Koha libraries and an isolated local HTTP
+server; it checks repeated outages and recovery within the same process:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp \
+  -e PERL5LIB=/usr/share/koha/lib -v "$PWD:/work:ro" \
+  --entrypoint /usr/bin/perl "$KOHA_TEST_IMAGE" \
+  /work/tests/koha-es-product-check.test.pl \
+  /work/scripts/container/koha-es-indexer-26.05.05.pl
+```
+
+The versioned config is deployed with the normal Swarm deploy. At startup, the
+service checks the original daemon's SHA-256; if it differs, the original daemon
+runs and logs `Elasticsearch recovery patch is inactive`. Review the patch for
+that Koha version before relying on recovery. RabbitMQ has no persistent data
+volume in this stack, so replacing the broker can still lose queued messages.
+Before restarting RabbitMQ, stop new jobs and drain its queues.
+
+Check the indexer after deployment:
+
+```bash
+docker service logs --since 10m koha_koha-es-indexer 2>&1 | grep -E 'recovery patch is inactive|Elasticsearch unavailable|Update of elastic index failed'
+```
+
+No output means none of these messages appeared in the selected log interval;
+it does not prove that outage recovery has been exercised.

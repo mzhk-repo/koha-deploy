@@ -165,3 +165,107 @@
 - Added `KOHA_ADMIN_EMAIL_ADDRESS` to the env contract and set it in the encrypted dev and production configurations.
 - The SMTP bootstrap validates the address, applies and verifies `KohaAdminEmailAddress`, and flushes the Koha cache. If the variable is absent, the existing preference is preserved.
 - Checked shell syntax, ShellCheck, SOPS decryption and changed configuration keys; runtime bootstrap and delivery remain unverified.
+
+### 13) Controlled Koha schema upgrade before Swarm deploy
+
+- Added `scripts/koha-upgrade-schema-swarm.sh` for existing databases with Koha
+  tasks on the local Swarm manager. It checks the configured target image and schema, refuses
+  downgrades, waits for active RabbitMQ messages, stops Koha services, runs
+  `koha-upgrade-schema`, and verifies the result. It does not require a backup.
+- The normal Swarm deploy can run this step with the explicit
+  `ORCHESTRATOR_SCHEMA_UPGRADE=true` flag; the default deploy remains unchanged.
+  A failed or unverifiable migration retains a Swarm lock and stopped services.
+- Documented the dev command, operational prerequisites and failure handling in
+  `docs/scripts_runbook.md`. Production execution requires explicit approval.
+- Verification: shell syntax, ShellCheck and mocked schema upgrade scenarios;
+  a temporary container using the target image and DB network read the dev
+  schema version and confirmed that Koha reports an update is needed.
+  No live schema upgrade or deploy was performed.
+
+### 14) RabbitMQ 4.4 native STOMP connection cleanup
+
+- Prepared a derived RabbitMQ 4.4.0 Alpine image with a scoped Management API
+  fix: when the existing connection record has no `pid`, use its `connection`
+  process only if the protocol is STOMP. Existing API authorization and other
+  protocol handling remain intact.
+- Added optional `RABBITMQ_SWARM_IMAGE` to select a full image reference; when
+  omitted, the existing official RabbitMQ image selection is unchanged. The
+  derived image has not been published or deployed.
+- Added an isolated integration check for three STOMP queues, Management API
+  cleanup and replacement consumer delivery. Documented build and rollout
+  prerequisites; no live RabbitMQ data or services were modified.
+
+### 15) Dev Elasticsearch indexing recovery
+
+- Jobs 391 and 394 failed with `BadResponse` / `NoNodes` while their biblio
+  records 200 and 201 remained in MariaDB but were absent from Elasticsearch.
+  Elasticsearch later responded from the indexer container and reported green.
+- Reindexed only records 200 and 201 using Koha's `--bnumber` option; both
+  Elasticsearch document requests returned HTTP 200. Restarted only the dev
+  indexer service. Job 395 failed before the restart; control job 396 finished
+  after it. The three RabbitMQ queues had one consumer each and no messages.
+- Koha 26.05.05 wraps the original `NoNodes` exception as `BadResponse`, while
+  the daemon checks only the original exception type. Its STOMP path also ACKs
+  before committing a batch, so resetting jobs to `new` alone does not requeue
+  their messages. The original transport failure remains undetermined and this
+  runtime recovery does not provide a permanent fix.
+
+### 16) Elasticsearch indexing retry after `NoNodes`
+
+- Added a versioned copy of the Koha 26.05.05 indexer, selected only when the
+  image daemon has the known SHA-256. It recognizes wrapped `NoNodes`, retains
+  STOMP messages until the batch is processed, retries after an outage, and
+  accepts redelivered jobs left `started` by an interrupted consumer.
+- Versioned and mounted the daemon through the existing worker config renderer.
+  A different upstream daemon runs unchanged with a warning; broker replacement
+  can still lose queued messages because RabbitMQ has no persistent volume.
+- Verified repeated `NoNodes`, later success and permanent error handling using
+  mocked indexers in an isolated Koha container; checked Perl syntax, worker
+  config rendering and Compose configuration. An isolated RabbitMQ 4.4 test
+  verified individual ACK, requeue, redelivery headers and disconnect recovery.
+  A live Elasticsearch outage has not been tested; no deployment was performed.
+
+### 17) Preserve RabbitMQ 4.4 on deploy
+
+- Compose and Swarm use the same `RABBITMQ_IMAGE` reference, with the example
+  set to the RabbitMQ 4.4.0 image containing the STOMP Management API fix.
+  The default Swarm build includes RabbitMQ.
+- Removed the obsolete RabbitMQ version and Swarm image parameters from the
+  env template; runtime environment files require an operator update.
+- Enabled STOMP plugins in the derived image for standalone Compose and updated
+  the architecture and runbook.
+- Verification: env template validation, shell syntax and ShellCheck, Compose
+  and Swarm image rendering, and
+  `git diff --check`. Image build and deployment were not performed.
+
+### 18) Dev Elasticsearch indexing queue recovery
+
+- The dev indexer repeatedly reported `NoNodes` while Elasticsearch responded
+  from its container and cluster health was green. Two messages remained
+  unacknowledged; a fresh Koha Elasticsearch client connected successfully.
+- Restarted only the dev indexer service. Both queued messages were redelivered,
+  jobs 402 and 405 finished, and the index queue returned to zero messages with
+  one consumer. The original cause of the repeated failures remains unknown;
+  the existing retry behavior did not recover without a process restart.
+
+### 19) Prevent persistent Elasticsearch `NoNodes` after headerless errors
+
+- Reproduced the failure with the deployed Koha libraries: a headerless error
+  changes the expected product header globally, so subsequent healthy responses
+  fail product validation and even a fresh client reports `NoNodes`. Restoring
+  the expected value immediately restores connectivity. The initial transport
+  event in the historical incident is not established.
+- The versioned recovery daemon scopes Koha's compatibility hook to each
+  response. Headerless-response compatibility and rejection of unknown products
+  remain intact for both biblio and authority clients.
+- Regression checks use the actual Koha libraries, error responses 599/503/401,
+  headerless success, unknown products, and repeated local HTTP outages followed
+  by recovery in the same process. The original hook fails the regression check;
+  the fix and existing job retry checks pass in isolated containers.
+- Deployed only the dev indexer using versioned Docker config
+  `koha_es_indexer_recovery_552c8f64369b`; the running file hash matches the
+  repository. Control job 406 finished and record 246 is present in Elasticsearch.
+  A separate client using the deployed fix reached real Elasticsearch after a
+  simulated headerless transport failure. All three queues are empty with one
+  consumer each; the service update completed. Syntax, config-versioning and diff
+  checks passed. No live Elasticsearch outage or production deployment was run.

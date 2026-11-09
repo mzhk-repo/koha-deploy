@@ -282,7 +282,7 @@ print_swarm_service_diagnostics() {
 
 build_swarm_local_images() {
   local compose_file="$1"
-  local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es}"
+  local build_services="${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es rabbitmq}"
   local services=()
   local service before_image_id after_image_id
 
@@ -373,7 +373,7 @@ swarm_service_needs_reconcile() {
 }
 
 force_swarm_service_reconcile() {
-  local reconcile_candidates="${ORCHESTRATOR_SWARM_RECONCILE_CANDIDATES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es} koha}"
+  local reconcile_candidates="${ORCHESTRATOR_SWARM_RECONCILE_CANDIDATES:-${ORCHESTRATOR_SWARM_BUILD_SERVICES:-es rabbitmq} koha}"
   local service_list=("${RECONCILE_CHANGED_SERVICES[@]:-}")
   local service service_name
 
@@ -553,6 +553,15 @@ deploy_swarm() {
   run_pre_deploy_adjacent_scripts
   build_swarm_local_images "${compose_file}"
   pre_pull_koha_image
+
+  if is_true "${ORCHESTRATOR_SCHEMA_UPGRADE:-false}"; then
+    case "${ENVIRONMENT_NAME:-${SERVER_ENV:-${ENVIRONMENT:-}}}" in
+      dev|development|prod|production) ;;
+      *) log 'ERROR: schema upgrade requires an explicitly identified dev or prod environment'; exit 1 ;;
+    esac
+    STACK_NAME="${STACK_NAME}" run_script "Koha schema upgrade" "${SCRIPT_DIR}/koha-upgrade-schema-swarm.sh" \
+      --env "${ORCHESTRATOR_RESOLVED_ENVIRONMENT}" --env-file "${ENV_FILE}"
+  fi
 
   if swarm_web_has_embedded_workers; then
     log "Legacy embedded STOMP workers detected; applying transition manifest before starting dedicated workers"

@@ -1,0 +1,4 @@
+*
+!patches/
+!patches/4.4.0/
+!patches/4.4.0/rabbit_mgmt_wm_connection.erl

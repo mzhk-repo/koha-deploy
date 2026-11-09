@@ -1,6 +1,6 @@
 # Deploy Repo Architecture (Koha)
 
-Дата оновлення: 2026-10-05
+Дата оновлення: 2026-11-06
 
 ## 1) Призначення репозиторію
 
@@ -19,7 +19,7 @@
 4. `koha-es-indexer` (окремий crash-only daemon для Elasticsearch indexing)
 5. `db` (`mariadb:11`)
 6. `es` (локальна збірка з `elasticsearch/Dockerfile`)
-7. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile`, STOMP enabled)
+7. `rabbitmq` (локальна збірка з `rabbitmq/Dockerfile.4.4-stomp-fix`, STOMP enabled)
 8. `memcached` (локальна збірка з `memcached/Dockerfile`)
 
 Зовнішній доступ:
@@ -46,6 +46,14 @@
 6. Публічний трафік до Koha не відкривається напряму через host ports.
 
 ## 4) Elasticsearch indexing model
+
+The deploy mounts a versioned recovery daemon for the known Koha 26.05.05
+indexer source hash. It retains STOMP messages until indexing finishes and
+requeues `NoNodes` jobs. Other source hashes use the image daemon with a warning;
+the recovery patch must be reviewed for each changed upstream daemon.
+The recovery daemon also scopes Koha's Elasticsearch product-check compatibility
+hook to one response. A headerless transport error must not change the expected
+product header for subsequent responses or freshly created clients.
 
 1. `koha-es-indexer` це окремий довгоживучий Swarm service, а не background-процес всередині `koha`.
 2. Основний `koha` передає image-native `KOHA_ES_INDEXER_AUTOSTART=false`, що вимикає legacy
@@ -89,6 +97,11 @@
    отримує sysctl `tcp_keepalive_time=30`, `tcp_keepalive_intvl=10`, `tcp_keepalive_probes=4`. Це дає
    виявлення недоступного idle peer приблизно за 70 секунд. Значення runtime watchdog лишаються незалежною
    перевіркою RabbitMQ consumer; TCP keepalive не виявляє завислий Perl процес за живого TCP-з'єднання.
+8. Для RabbitMQ 4.4.0 підготовлено окремий derived image з виправленням Management API:
+   native STOMP connection зберігає процес у полі `connection`, тоді як стандартний DELETE
+   шукає `pid`. Compose і Swarm використовують образ із `RABBITMQ_IMAGE`;
+   оркестратор за замовчуванням збирає його з `rabbitmq/Dockerfile.4.4-stomp-fix`
+   до deploy. Образ має бути доступний на вузлі, де запускається RabbitMQ.
 
 ## 5) Конфігураційна модель
 
@@ -102,6 +115,11 @@
    `07-db-import.sh` до `KOHA_SETUP_SKIP_STEPS`, незалежно від env; Swarm entrypoint повторно встановлює
    skip після завантаження `app_env_payload`. Перед будь-якими post-deploy syspref-змінами
    `koha-db-schema-guard.sh` вимагає непорожній `systempreferences.Version`.
+6. Оновлення наявної схеми для нового образу — окремий керований крок
+   `scripts/koha-upgrade-schema-swarm.sh`; його також можна явно ввімкнути перед
+   Swarm deploy через `ORCHESTRATOR_SCHEMA_UPGRADE=true`. DB та активні Koha tasks
+   мають бути на manager, з якого запускається скрипт. Скрипт
+   не створює backup і після помилки міграції залишає сервіси зупиненими.
 
 Актуальні модулі bootstrap:
 - `timezone`

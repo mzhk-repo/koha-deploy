@@ -224,6 +224,9 @@ services:
       - source: koha_es_indexer_process
         target: /usr/local/sbin/koha-es-indexer-process
         mode: 0555
+      - source: koha_es_indexer_recovery
+        target: /usr/local/share/koha-es-indexer-recovery.pl
+        mode: 0444
     command:
       - /bin/bash
       - -lc
@@ -423,8 +426,15 @@ services:
           wait_until "stale RabbitMQ elastic_index consumer cleanup" rabbitmq_elastic_queue_has_no_consumers
         fi
 
+        indexer_daemon=/usr/share/koha/bin/workers/es_indexer_daemon.pl
+        # shortcut: this patch is tied to Koha 26.05.05, review it when the upstream daemon changes
+        if [ "$$(sha256sum "$$indexer_daemon" | cut -d ' ' -f 1)" = "5af7ab0b9e7bdee2db5f1fc7f5e902fc09575a3c3f9aebc855cb428b76f1d75d" ]; then
+          indexer_daemon=/usr/local/share/koha-es-indexer-recovery.pl
+        else
+          echo "WARNING: unrecognized Koha indexer; Elasticsearch recovery patch is inactive" >&2
+        fi
         setpriv --reuid "$$KOHA_INSTANCE_UID" --regid "$$KOHA_INSTANCE_GID" --init-groups \
-          /usr/bin/perl /usr/share/koha/bin/workers/es_indexer_daemon.pl \
+          /usr/bin/perl "$$indexer_daemon" \
           --batch_size "$$KOHA_ES_INDEXER_BATCH_SIZE" &
         indexer_pid="$$!"
 
@@ -564,10 +574,8 @@ services:
   rabbitmq:
     build:
       context: ./rabbitmq
-      dockerfile: Dockerfile
-      args:
-        RABBITMQ_VERSION: ${RABBITMQ_VERSION:-3-management}
-    image: ${RABBITMQ_IMAGE:-koha-local-rabbitmq:3-management}
+      dockerfile: Dockerfile.4.4-stomp-fix
+    image: ${RABBITMQ_IMAGE:?RABBITMQ_IMAGE is required}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -697,3 +705,5 @@ configs:
     file: ./rabbitmq/rabbitmq.conf
   koha_es_indexer_process:
     file: ./scripts/container/koha-es-indexer-process.sh
+  koha_es_indexer_recovery:
+    file: ./scripts/container/koha-es-indexer-26.05.05.pl
